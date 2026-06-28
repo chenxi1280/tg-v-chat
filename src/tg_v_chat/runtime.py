@@ -6,6 +6,7 @@ import time
 
 from tg_v_chat.config import load_config
 from tg_v_chat.main import build_runtime
+from tg_v_chat.telegram.telethon_clients import DeveloperAppConfig, TelethonBotProcess
 
 
 VALID_ROLES = {"bot", "listener", "worker"}
@@ -22,8 +23,19 @@ class StopSignal:
 def main() -> None:
     args = parse_args()
     config = load_config()
-    build_runtime(config.database_url, config.session_encryption_key, config.bot_token)
-    wait_forever(args.role)
+    runtime = build_runtime(config.database_url, config.session_encryption_key, config.bot_token)
+    bot_process = TelethonBotProcess(_primary_app_config(config), config.bot_token, runtime.bot_handler.handle_reply)
+    run_role(args.role, bot_runner=bot_process.run)
+
+
+def run_role(role: str, *, bot_runner=None, wait=None) -> None:
+    wait_runner = wait or wait_forever
+    if role == "bot":
+        if bot_runner is None:
+            raise RuntimeError("bot runner is required")
+        bot_runner()
+        return
+    wait_runner(role)
 
 
 def parse_args():
@@ -39,6 +51,14 @@ def wait_forever(role: str) -> None:
     while not stop_signal.stop:
         time.sleep(5)
     print(f"tg-v-chat {role} stopped")
+
+
+def _primary_app_config(config) -> DeveloperAppConfig:
+    try:
+        api_id = int(config.primary_api_id)
+    except ValueError as exc:
+        raise RuntimeError("TG_V_CHAT_PRIMARY_API_ID must be an integer") from exc
+    return DeveloperAppConfig(api_id, config.primary_api_hash)
 
 
 if __name__ == "__main__":

@@ -17,8 +17,9 @@
 | surface | entrypoint | owner | notes |
 | --- | --- | --- | --- |
 | Process bootstrap | `src/tg_v_chat/main.py` | dev | Builds SQLite/PostgreSQL-injectable storage, Telethon adapters, Bot handler, and worker runner |
+| Bot update routing | `src/tg_v_chat/bot/router.py` | dev | Handles `/start`, `/admin`, non-reply guidance, and reply command dispatch with explicit failure replies |
 | Bot reply handling | `src/tg_v_chat/bot/handlers.py` | dev | Converts Bot reply commands into relay service calls; non-reply is explicit failure in service |
-| Telegram adapters | `src/tg_v_chat/telegram/telethon_clients.py` | dev | Telethon-only gateway/sender ports; disconnected adapters raise explicit errors rather than fake success |
+| Telegram adapters | `src/tg_v_chat/telegram/telethon_clients.py` | dev | Telethon bot process and gateway/sender ports; disconnected user-session adapters raise explicit errors rather than fake success |
 | Worker runner | `src/tg_v_chat/workers/runner.py` | dev | Real worker loop entrypoint; raises when no workers are configured |
 | Runtime healthcheck | `src/tg_v_chat/healthcheck.py` | dev | Validates required env and PostgreSQL connectivity |
 | Runtime process | `src/tg_v_chat/runtime.py` | dev | Role-based bot/listener/worker process entrypoint |
@@ -34,6 +35,7 @@
 | `tg_v_chat.domain` | Immutable enums, commands, relay results, and session failure type | Product data model | Typed service contracts | Low |
 | `tg_v_chat.crypto` | Encrypt/decrypt Telegram session strings using environment-provided key material | Session string | Fernet token | High: wrong key prevents session restore |
 | `tg_v_chat.config` | Required environment loading | env vars | `AppConfig` | Medium: missing secrets block startup explicitly |
+| `tg_v_chat.bot.router` | Bot command/reply routing | Telegram Bot private messages | command replies or BotReplyCommand dispatch | High: user-visible bot responsiveness |
 | `tg_v_chat.storage.models` | SQLAlchemy persistence schema | Repository writes | Database rows | High: schema changes affect migrations |
 | `tg_v_chat.storage.repositories` | UnitOfWork and repository layer | Service calls | persisted rows | Medium |
 | `tg_v_chat.services.auth` | Phone code / 2FA binding and account limit enforcement | phone, code, password | Bound account and session slots | High: secrets and auth state |
@@ -79,10 +81,13 @@
 - Session-layer primary failure switches to standby_1 and records `SessionFailoverEvent`.
 - Exhausted sessions raise explicit `SessionFailure` and record an `exhausted` failover event.
 - Media groups defer pushes until the sequence anchor arrives, then flush pending relays by sequence.
+- Bot `/start` and `/admin` now return explicit online/status replies instead of leaving the user with no response.
+- `runtime --role bot` starts a real Telethon Bot process instead of building dependencies and sleeping.
 
 ## Known Limits Before Production
 
-- Telethon adapters are real integration boundaries but production network clients/listeners still need environment-specific wiring and E4 verification.
+- Telethon Bot update ingestion is wired at runtime, but production E4 verification is still required after release.
+- User session listener and user-session send adapters still need environment-specific production wiring and E4 verification.
 - Alembic initial migration exists and PostgreSQL SQL generation is verified, but local online PostgreSQL migration is unproven because Docker daemon is unavailable in this environment.
 - GitHub Actions release workflow exists but has not run from `release` in this turn; release gate cannot pass until Actions checks/build/deploy evidence exists.
 - Release gate remains pending/blocked until CI and production verification complete.

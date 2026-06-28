@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable
 
+from tg_v_chat.bot.router import BotIncomingMessage, BotUpdateRouter
 from tg_v_chat.domain import IncomingPrivateMessage, OutgoingReply, SessionFailure, SessionSlotRef
 
 
@@ -44,3 +45,57 @@ def message_kind_text():
     from tg_v_chat.domain import MediaKind
 
     return MediaKind.TEXT
+
+
+class TelethonBotProcess:
+    def __init__(
+        self,
+        app_config: DeveloperAppConfig,
+        bot_token: str,
+        handle_reply: Callable[[object], object],
+    ):
+        self._app_config = app_config
+        self._bot_token = bot_token
+        self._handle_reply = handle_reply
+
+    def run(self) -> None:
+        import asyncio
+
+        asyncio.run(self._run())
+
+    async def _run(self) -> None:
+        from telethon import TelegramClient, events
+        from telethon.sessions import StringSession
+
+        client = TelegramClient(StringSession(), self._app_config.api_id, self._app_config.api_hash)
+        await client.start(bot_token=self._bot_token)
+        client.add_event_handler(self._handle_new_message, events.NewMessage(incoming=True))
+        print("tg-v-chat bot connected")
+        await client.run_until_disconnected()
+
+    async def _handle_new_message(self, event) -> None:
+        if not getattr(event, "is_private", False):
+            return
+        replies: list[tuple[int, str]] = []
+        router = BotUpdateRouter(self._handle_reply, replies.append)
+        router.handle(_incoming_message(event))
+        for _message_id, text in replies:
+            await event.reply(text)
+
+
+def _incoming_message(event) -> BotIncomingMessage:
+    message = event.message
+    return BotIncomingMessage(
+        system_user_id=event.sender_id,
+        message_id=message.id,
+        reply_to_message_id=_reply_to_message_id(message),
+        text=event.raw_text or "",
+        media_kind=message_kind_text(),
+    )
+
+
+def _reply_to_message_id(message) -> int | None:
+    reply = getattr(message, "reply_to", None)
+    if reply is None:
+        return None
+    return getattr(reply, "reply_to_msg_id", None)
