@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import BigInteger, Column, DateTime, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import declarative_base, relationship
 
 
@@ -17,7 +17,7 @@ class SystemUserModel(Base):
     __tablename__ = "system_users"
 
     id = Column(Integer, primary_key=True)
-    telegram_user_id = Column(Integer, unique=True, nullable=False)
+    telegram_user_id = Column(BigInteger, unique=True, nullable=False)
     status = Column(String(32), nullable=False, default="active")
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
 
@@ -75,7 +75,7 @@ class RelayMessageModel(Base):
 
     id = Column(Integer, primary_key=True)
     bound_tg_account_id = Column(Integer, ForeignKey("bound_tg_accounts.id"), nullable=False)
-    peer_id = Column(Integer, nullable=False)
+    peer_id = Column(BigInteger, nullable=False)
     source_message_id = Column(Integer, nullable=False)
     media_kind = Column(String(32), nullable=False)
     payload = Column(Text, nullable=False)
@@ -102,7 +102,7 @@ class ReplyMappingModel(Base):
     system_user_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
     relay_message_id = Column(Integer, ForeignKey("relay_messages.id"), nullable=False)
     bound_tg_account_id = Column(Integer, nullable=False)
-    peer_id = Column(Integer, nullable=False)
+    peer_id = Column(BigInteger, nullable=False)
     source_message_id = Column(Integer, nullable=False)
     media_kind = Column(String(32), nullable=False)
     status = Column(String(32), nullable=False, default="active")

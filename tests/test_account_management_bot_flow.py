@@ -1,4 +1,5 @@
 import pytest
+from sqlalchemy import BigInteger
 
 from tg_v_chat.bot.account_management import AccountManagementService
 from tg_v_chat.bot.router import BotCallback, BotIncomingMessage, BotUpdateRouter
@@ -6,6 +7,7 @@ from tg_v_chat.crypto import SessionCipher
 from tg_v_chat.domain import DeveloperSlot
 from tg_v_chat.services.auth import AuthChallenge, AuthStep
 from tg_v_chat.storage.database import create_session_factory, init_db
+from tg_v_chat.storage.models import RelayMessageModel, ReplyMappingModel, SystemUserModel
 from tg_v_chat.storage.repositories import UnitOfWork
 
 
@@ -50,6 +52,23 @@ def test_start_renders_account_management_home(bot_parts):
     assert "账号管理" in responses[0].text
     assert "还没有绑定" in responses[0].text
     assert [button.text for button in responses[0].buttons] == ["绑定 TG 账号", "中转说明", "帮助"]
+
+
+def test_telegram_ids_use_big_integer_columns():
+    assert isinstance(SystemUserModel.__table__.c.telegram_user_id.type, BigInteger)
+    assert isinstance(RelayMessageModel.__table__.c.peer_id.type, BigInteger)
+    assert isinstance(ReplyMappingModel.__table__.c.peer_id.type, BigInteger)
+
+
+def test_start_accepts_real_large_telegram_user_id(bot_parts):
+    router, _authenticator, _commands, factory = bot_parts
+
+    responses = router.handle(BotIncomingMessage(7_677_366_761, 10, None, "/start"))
+
+    assert "账号管理" in responses[0].text
+    with UnitOfWork(factory) as uow:
+        user = uow.users.get_by_telegram_id(7_677_366_761)
+        assert user.telegram_user_id == 7_677_366_761
 
 
 def test_bind_button_then_phone_prompts_code(bot_parts):

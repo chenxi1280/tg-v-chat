@@ -65,6 +65,7 @@ class AccountManagementService:
     def home(self, telegram_user_id: int) -> BotResponse:
         with UnitOfWork(self._session_factory) as uow:
             user = uow.users.get_or_create(telegram_user_id)
+            uow.commit()
             accounts = uow.accounts.list_for_user(user.id)
             text = _home_text(accounts)
             return BotResponse(text, buttons=_home_buttons(accounts))

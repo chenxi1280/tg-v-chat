@@ -19,7 +19,7 @@ def upgrade() -> None:
     op.create_table(
         "system_users",
         sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("telegram_user_id", sa.Integer(), nullable=False, unique=True),
+        sa.Column("telegram_user_id", sa.BigInteger(), nullable=False, unique=True),
         sa.Column("status", sa.String(length=32), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
     )
@@ -82,7 +82,7 @@ def _create_relay_tables() -> None:
         "relay_messages",
         sa.Column("id", sa.Integer(), primary_key=True),
         sa.Column("bound_tg_account_id", sa.Integer(), sa.ForeignKey("bound_tg_accounts.id"), nullable=False),
-        sa.Column("peer_id", sa.Integer(), nullable=False),
+        sa.Column("peer_id", sa.BigInteger(), nullable=False),
         sa.Column("source_message_id", sa.Integer(), nullable=False),
         sa.Column("media_kind", sa.String(length=32), nullable=False),
         sa.Column("payload", sa.Text(), nullable=False),
@@ -106,7 +106,7 @@ def _create_relay_tables() -> None:
         sa.Column("system_user_id", sa.Integer(), sa.ForeignKey("system_users.id"), nullable=False),
         sa.Column("relay_message_id", sa.Integer(), sa.ForeignKey("relay_messages.id"), nullable=False),
         sa.Column("bound_tg_account_id", sa.Integer(), nullable=False),
-        sa.Column("peer_id", sa.Integer(), nullable=False),
+        sa.Column("peer_id", sa.BigInteger(), nullable=False),
         sa.Column("source_message_id", sa.Integer(), nullable=False),
         sa.Column("media_kind", sa.String(length=32), nullable=False),
         sa.Column("status", sa.String(length=32), nullable=False),
