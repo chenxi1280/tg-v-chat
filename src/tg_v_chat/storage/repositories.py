@@ -46,12 +46,25 @@ class AccountRepository:
         self._session = session
 
     def count_for_user(self, system_user_id: int) -> int:
-        return self._session.query(BoundTgAccountModel).filter_by(system_user_id=system_user_id).count()
+        return (
+            self._session.query(BoundTgAccountModel)
+            .filter(BoundTgAccountModel.system_user_id == system_user_id)
+            .filter(BoundTgAccountModel.status != "disabled")
+            .count()
+        )
 
     def list_for_user(self, system_user_id: int) -> list[BoundTgAccountModel]:
         return (
             self._session.query(BoundTgAccountModel)
             .filter_by(system_user_id=system_user_id)
+            .order_by(BoundTgAccountModel.id.asc())
+            .all()
+        )
+
+    def list_by_status_for_user(self, system_user_id: int, status: str) -> list[BoundTgAccountModel]:
+        return (
+            self._session.query(BoundTgAccountModel)
+            .filter_by(system_user_id=system_user_id, status=status)
             .order_by(BoundTgAccountModel.id.asc())
             .all()
         )
@@ -142,6 +155,14 @@ class AuthChallengeRepository:
         challenge.status = status
         self._session.flush()
         return challenge
+
+    def list_for_account(self, account_id: int) -> list[AuthChallengeModel]:
+        return (
+            self._session.query(AuthChallengeModel)
+            .filter_by(bound_tg_account_id=account_id)
+            .order_by(AuthChallengeModel.id.asc())
+            .all()
+        )
 
 
 class ConversationStateRepository:

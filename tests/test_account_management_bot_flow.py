@@ -4,7 +4,7 @@ from sqlalchemy import BigInteger
 from tg_v_chat.bot.account_management import AccountManagementService
 from tg_v_chat.bot.router import BotCallback, BotIncomingMessage, BotUpdateRouter
 from tg_v_chat.crypto import SessionCipher
-from tg_v_chat.domain import DeveloperSlot
+from tg_v_chat.domain import DeveloperSlot, MAX_BOUND_ACCOUNTS
 from tg_v_chat.services.auth import AuthChallenge, AuthFailure, AuthStep
 from tg_v_chat.storage.database import create_session_factory, init_db
 from tg_v_chat.storage.models import RelayMessageModel, ReplyMappingModel, SystemUserModel
@@ -147,6 +147,49 @@ def test_expired_code_cancels_binding_state():
         assert uow.conversation_states.get(user.id) is None
         account = uow.accounts.list_for_user(user.id)[0]
         assert account.status == "disabled"
+
+
+def test_home_cancels_abandoned_binding_state():
+    factory = create_session_factory("sqlite:///:memory:")
+    init_db(factory)
+    authenticator = FakeAuthenticator()
+    service = AccountManagementService(factory, authenticator, SessionCipher("test-key"))
+    router = BotUpdateRouter(lambda _command: None, service)
+
+    router.handle_callback(BotCallback(146517, "account.bind.start"))
+    router.handle(BotIncomingMessage(146517, 11, None, "+15550000001"))
+    with UnitOfWork(factory) as uow:
+        user = uow.users.get_by_telegram_id(146517)
+        uow.conversation_states.clear(user.id)
+        uow.commit()
+
+    response = router.handle(BotIncomingMessage(146517, 12, None, "/start"))[0]
+
+    assert "已绑定账号：0/20" in response.text
+    assert "需要处理：0" in response.text
+    with UnitOfWork(factory) as uow:
+        user = uow.users.get_by_telegram_id(146517)
+        account = uow.accounts.list_for_user(user.id)[0]
+        challenge = uow.auth_challenges.get(1)
+        assert account.status == "disabled"
+        assert challenge.status == "cancelled"
+
+
+def test_disabled_accounts_do_not_block_new_binding():
+    factory = create_session_factory("sqlite:///:memory:")
+    init_db(factory)
+    service = AccountManagementService(factory, FakeAuthenticator(), SessionCipher("test-key"))
+    router = BotUpdateRouter(lambda _command: None, service)
+    with UnitOfWork(factory) as uow:
+        user = uow.users.get_or_create(146517)
+        for index in range(MAX_BOUND_ACCOUNTS):
+            account = uow.accounts.create(user.id, f"+1555000{index:04d}")
+            uow.accounts.mark_disabled(account.id)
+        uow.commit()
+
+    response = router.handle_callback(BotCallback(146517, "account.bind.start"))[0]
+
+    assert "请输入要管理的 TG 账号手机号" in response.text
 
 
 def test_wrong_password_keeps_password_state():

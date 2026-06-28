@@ -12,6 +12,10 @@ from tg_v_chat.storage.repositories import UnitOfWork
 STATE_AWAITING_PHONE = "awaiting_phone"
 STATE_AWAITING_CODE = "awaiting_code"
 STATE_AWAITING_PASSWORD = "awaiting_password"
+ACCOUNT_STATUS_ACTIVE = "active"
+ACCOUNT_STATUS_BINDING = "binding"
+ACCOUNT_STATUS_DISABLED = "disabled"
+AUTH_STATUS_CANCELLED = "cancelled"
 PHONE_PATTERN = re.compile(r"^\+\d{8,15}$")
 
 
@@ -65,6 +69,7 @@ class AccountManagementService:
     def home(self, telegram_user_id: int) -> BotResponse:
         with UnitOfWork(self._session_factory) as uow:
             user = uow.users.get_or_create(telegram_user_id)
+            _cancel_abandoned_bindings(uow, user.id)
             uow.commit()
             accounts = uow.accounts.list_for_user(user.id)
             text = _home_text(accounts)
@@ -73,6 +78,7 @@ class AccountManagementService:
     def start_bind(self, telegram_user_id: int) -> BotResponse:
         with UnitOfWork(self._session_factory) as uow:
             user = uow.users.get_or_create(telegram_user_id)
+            _cancel_abandoned_bindings(uow, user.id)
             if uow.accounts.count_for_user(user.id) >= MAX_BOUND_ACCOUNTS:
                 return BotResponse("每个系统用户最多绑定 20 个 Telegram 账号。", buttons=_home_nav_buttons())
             uow.conversation_states.set(user.id, STATE_AWAITING_PHONE)
@@ -180,8 +186,8 @@ def _home_text(accounts) -> str:
                 "绑定后，该账号收到的私聊会推送到这里，你回复 Bot 推送消息即可代发。",
             )
         )
-    active_count = sum(1 for account in accounts if account.status == "active")
-    attention_count = sum(1 for account in accounts if account.status != "active")
+    active_count = sum(1 for account in accounts if account.status == ACCOUNT_STATUS_ACTIVE)
+    attention_count = sum(1 for account in accounts if account.status not in {ACCOUNT_STATUS_ACTIVE, ACCOUNT_STATUS_DISABLED})
     return f"账号管理\n\n已绑定账号：{active_count}/{MAX_BOUND_ACCOUNTS}\n需要处理：{attention_count}\n\n请选择要进行的操作。"
 
 
@@ -310,6 +316,27 @@ def _auth_failure_response(uow, user_id: int, challenge_id: int | None, failure:
     return BotResponse(failure.message, buttons=_home_nav_buttons())
 
 
+def _cancel_abandoned_bindings(uow, user_id: int) -> None:
+    active_challenge_id = _active_challenge_id(uow, user_id)
+    for account in uow.accounts.list_by_status_for_user(user_id, ACCOUNT_STATUS_BINDING):
+        challenges = uow.auth_challenges.list_for_account(account.id)
+        if any(challenge.id == active_challenge_id for challenge in challenges):
+            continue
+        _cancel_challenges(uow, challenges)
+        uow.accounts.mark_disabled(account.id)
+
+
+def _active_challenge_id(uow, user_id: int) -> int | None:
+    state = uow.conversation_states.get(user_id)
+    return None if state is None else state.auth_challenge_id
+
+
+def _cancel_challenges(uow, challenges) -> None:
+    for challenge in challenges:
+        if challenge.status != AuthStep.COMPLETE.value:
+            uow.auth_challenges.mark_status(challenge.id, AUTH_STATUS_CANCELLED)
+
+
 def _parse_id(data: str) -> int:
     try:
         return int(data.rsplit(":", 1)[1])
@@ -326,5 +353,5 @@ def _cancel_challenge_if_needed(uow, state) -> None:
 def _cancel_challenge_by_id(uow, challenge_id: int | None) -> None:
     if challenge_id is None:
         return
-    challenge = uow.auth_challenges.mark_status(challenge_id, "cancelled")
+    challenge = uow.auth_challenges.mark_status(challenge_id, AUTH_STATUS_CANCELLED)
     uow.accounts.mark_disabled(challenge.bound_tg_account_id)
