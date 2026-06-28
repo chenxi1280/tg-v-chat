@@ -11,6 +11,7 @@ from tg_v_chat.domain import (
     SessionFailure,
     SessionSlotRef,
     SessionStatus,
+    TelegramPeer,
 )
 
 
@@ -23,7 +24,7 @@ class BotGateway(Protocol):
 
 
 class TelegramSenderPool(Protocol):
-    def send_reply(self, session_slot, peer_id: int, reply: OutgoingReply) -> int:
+    def send_reply(self, session_slot, peer: TelegramPeer, reply: OutgoingReply) -> int:
         raise NotImplementedError
 
 
@@ -118,7 +119,10 @@ class PrivateRelayService:
         for index, session_slot in enumerate(slots):
             try:
                 slot_ref = _slot_ref(session_slot)
-                return self._senders.send_reply(slot_ref, mapping.peer_id, reply), slot_ref.developer_slot
+                return (
+                    self._senders.send_reply(slot_ref, _peer_from_mapping(mapping), reply),
+                    slot_ref.developer_slot,
+                )
             except SessionFailure as exc:
                 last_error = exc
                 self._mark_failed_and_record(slots, index, str(exc))
@@ -169,12 +173,17 @@ def _slot_ref(row) -> SessionSlotRef:
     )
 
 
+def _peer_from_mapping(row) -> TelegramPeer:
+    return TelegramPeer(id=row.peer_id, access_hash=row.peer_access_hash)
+
+
 def _message_from_relay(row) -> IncomingPrivateMessage:
     from tg_v_chat.domain import MediaKind
 
     return IncomingPrivateMessage(
         bound_tg_account_id=row.bound_tg_account_id,
         peer_id=row.peer_id,
+        peer_access_hash=row.peer_access_hash,
         source_message_id=row.source_message_id,
         media_kind=MediaKind(row.media_kind),
         payload=row.payload,

@@ -32,6 +32,12 @@ class SessionFailure(RuntimeError):
 
 
 @dataclass(frozen=True)
+class TelegramPeer:
+    id: int
+    access_hash: int | None = None
+
+
+@dataclass(frozen=True)
 class IncomingPrivateMessage:
     bound_tg_account_id: int
     peer_id: int
@@ -40,6 +46,7 @@ class IncomingPrivateMessage:
     payload: str
     media_group_id: str | None
     sequence: int
+    peer_access_hash: int | None = None
 
 
 @dataclass(frozen=True)

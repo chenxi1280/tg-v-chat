@@ -71,10 +71,10 @@ class FakeSenderPool:
         self.failing_slots = set(failing_slots or [])
         self.sent = []
 
-    def send_reply(self, session_slot, peer_id, reply):
+    def send_reply(self, session_slot, peer, reply):
         if session_slot.developer_slot in self.failing_slots:
             raise SessionFailure(f"{session_slot.developer_slot.value} failed")
-        self.sent.append((session_slot.developer_slot, peer_id, reply))
+        self.sent.append((session_slot.developer_slot, peer, reply))
         return 9000 + len(self.sent)
 
 
@@ -192,6 +192,21 @@ def test_reply_uses_mapping_and_fails_explicitly_without_reply(uow):
 
     with pytest.raises(LookupError, match="ReplyMapping 不存在"):
         relay.handle_bot_reply(OutgoingReply(1, 701, 12345, MediaKind.TEXT, "hello"))
+
+
+def test_reply_passes_peer_access_hash_to_sender(uow):
+    telegram_user_id = 7_677_366_761
+    account = create_active_account(uow, system_user_id=telegram_user_id)
+    senders = FakeSenderPool()
+    relay = PrivateRelayService(uow, FakeBotGateway(), senders)
+    pushed = relay.receive_private_message(
+        IncomingPrivateMessage(account.id, 88, 101, MediaKind.TEXT, "hi", None, 0, 123456789)
+    )
+
+    relay.handle_bot_reply(OutgoingReply(telegram_user_id, 704, pushed.bot_message_id, MediaKind.TEXT, "owner"))
+
+    assert senders.sent[0][1].id == 88
+    assert senders.sent[0][1].access_hash == 123456789
 
 
 def test_reply_rejects_cross_user_mapping_without_sending(uow):

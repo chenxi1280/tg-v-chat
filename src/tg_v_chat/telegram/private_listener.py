@@ -106,6 +106,7 @@ def private_message_from_event(binding: BoundListenerSession, event) -> Incoming
     return IncomingPrivateMessage(
         bound_tg_account_id=binding.account_id,
         peer_id=_peer_id(event),
+        peer_access_hash=_peer_access_hash(event),
         source_message_id=message.id,
         media_kind=_media_kind(message),
         payload=_payload(event),
@@ -191,6 +192,12 @@ def _peer_id(event) -> int:
     return int(getattr(event, "chat_id", None) or event.sender_id)
 
 
+def _peer_access_hash(event) -> int | None:
+    peer = getattr(event, "input_chat", None) or getattr(event, "input_sender", None)
+    access_hash = getattr(peer, "access_hash", None)
+    return int(access_hash) if access_hash is not None else None
+
+
 def _media_kind(message) -> MediaKind:
     if getattr(message, "photo", None) is not None:
         return MediaKind.PHOTO
@@ -214,5 +221,5 @@ def _media_group_id(message) -> str | None:
 
 
 class _NoopSenderPool:
-    def send_reply(self, _session_slot, _peer_id: int, _reply) -> int:
+    def send_reply(self, _session_slot, _peer, _reply) -> int:
         raise RuntimeError("listener process does not send replies")

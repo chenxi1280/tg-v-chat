@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from tg_v_chat.bot.router import BotCallback, BotIncomingMessage, BotResponse, BotUpdateRouter
-from tg_v_chat.domain import IncomingPrivateMessage, OutgoingReply, SessionFailure, SessionSlotRef
+from tg_v_chat.domain import IncomingPrivateMessage, OutgoingReply, SessionFailure, SessionSlotRef, TelegramPeer
 from tg_v_chat.services.auth import AuthChallenge, AuthFailure, AuthStep, PasswordRequired
 
 
@@ -31,15 +31,15 @@ class TelethonBotGateway:
 
 
 class TelethonSenderPool:
-    def __init__(self, send_reply: Callable[[SessionSlotRef, int, OutgoingReply], int] | None = None):
+    def __init__(self, send_reply: Callable[[SessionSlotRef, TelegramPeer, OutgoingReply], int] | None = None):
         self._send_reply = send_reply
 
-    def send_reply(self, session_slot: SessionSlotRef, peer_id: int, reply: OutgoingReply) -> int:
+    def send_reply(self, session_slot: SessionSlotRef, peer: TelegramPeer, reply: OutgoingReply) -> int:
         if session_slot.encrypted_session is None:
             raise SessionFailure(f"{session_slot.developer_slot.value} session 未授权")
         if self._send_reply is None:
             raise SessionFailure("Telethon user session client is not connected")
-        return self._send_reply(session_slot, peer_id, reply)
+        return self._send_reply(session_slot, peer, reply)
 
 
 class TelethonReplySender:
@@ -47,17 +47,17 @@ class TelethonReplySender:
         self._app_configs = app_configs
         self._cipher = cipher
 
-    def send_reply(self, session_slot: SessionSlotRef, peer_id: int, reply: OutgoingReply) -> int:
+    def send_reply(self, session_slot: SessionSlotRef, peer: TelegramPeer, reply: OutgoingReply) -> int:
         if session_slot.encrypted_session is None:
             raise SessionFailure(f"{session_slot.developer_slot.value} session 未授权")
         session_string = self._cipher.decrypt(session_slot.encrypted_session)
-        return _run_async(self._send(session_slot, session_string, peer_id, reply))
+        return _run_async(self._send(session_slot, session_string, peer, reply))
 
     async def _send(
         self,
         session_slot: SessionSlotRef,
         session_string: str,
-        peer_id: int,
+        peer: TelegramPeer,
         reply: OutgoingReply,
     ) -> int:
         from telethon import TelegramClient
@@ -67,7 +67,7 @@ class TelethonReplySender:
         client = TelegramClient(StringSession(session_string), app_config.api_id, app_config.api_hash)
         await client.connect()
         try:
-            sent = await client.send_message(peer_id, reply.payload)
+            sent = await client.send_message(_input_peer(peer), reply.payload)
             return sent.id
         except Exception as exc:
             raise SessionFailure(f"{session_slot.developer_slot.value} 发送失败: {exc}") from exc
@@ -155,6 +155,14 @@ def message_kind_text():
     from tg_v_chat.domain import MediaKind
 
     return MediaKind.TEXT
+
+
+def _input_peer(peer: TelegramPeer):
+    if peer.access_hash is None:
+        return peer.id
+    from telethon.tl.types import InputPeerUser
+
+    return InputPeerUser(peer.id, peer.access_hash)
 
 
 class TelethonBotProcess:

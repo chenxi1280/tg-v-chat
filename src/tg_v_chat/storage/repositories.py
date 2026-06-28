@@ -314,6 +314,7 @@ class MappingRepository:
             relay_message_id=relay.id,
             bound_tg_account_id=relay.bound_tg_account_id,
             peer_id=relay.peer_id,
+            peer_access_hash=relay.peer_access_hash,
             source_message_id=relay.source_message_id,
             media_kind=relay.media_kind,
         )
@@ -414,6 +415,7 @@ def _relay_values(message: IncomingPrivateMessage) -> dict:
     return {
         "bound_tg_account_id": message.bound_tg_account_id,
         "peer_id": message.peer_id,
+        "peer_access_hash": message.peer_access_hash,
         "source_message_id": message.source_message_id,
         "media_kind": message.media_kind.value,
         "payload": message.payload,
