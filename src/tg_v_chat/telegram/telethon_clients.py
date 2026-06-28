@@ -42,6 +42,39 @@ class TelethonSenderPool:
         return self._send_reply(session_slot, peer_id, reply)
 
 
+class TelethonReplySender:
+    def __init__(self, app_configs: dict, cipher):
+        self._app_configs = app_configs
+        self._cipher = cipher
+
+    def send_reply(self, session_slot: SessionSlotRef, peer_id: int, reply: OutgoingReply) -> int:
+        if session_slot.encrypted_session is None:
+            raise SessionFailure(f"{session_slot.developer_slot.value} session 未授权")
+        session_string = self._cipher.decrypt(session_slot.encrypted_session)
+        return _run_async(self._send(session_slot, session_string, peer_id, reply))
+
+    async def _send(
+        self,
+        session_slot: SessionSlotRef,
+        session_string: str,
+        peer_id: int,
+        reply: OutgoingReply,
+    ) -> int:
+        from telethon import TelegramClient
+        from telethon.sessions import StringSession
+
+        app_config = self._app_configs[session_slot.developer_slot]
+        client = TelegramClient(StringSession(session_string), app_config.api_id, app_config.api_hash)
+        await client.connect()
+        try:
+            sent = await client.send_message(peer_id, reply.payload)
+            return sent.id
+        except Exception as exc:
+            raise SessionFailure(f"{session_slot.developer_slot.value} 发送失败: {exc}") from exc
+        finally:
+            await client.disconnect()
+
+
 class TelethonAuthenticator:
     def __init__(self, app_config: DeveloperAppConfig):
         self._app_config = app_config

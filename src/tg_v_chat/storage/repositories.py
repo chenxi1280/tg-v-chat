@@ -70,6 +70,14 @@ class AccountRepository:
             .all()
         )
 
+    def list_active(self) -> list[BoundTgAccountModel]:
+        return (
+            self._session.query(BoundTgAccountModel)
+            .filter_by(status="active")
+            .order_by(BoundTgAccountModel.id.asc())
+            .all()
+        )
+
     def find_incomplete_for_user_phone(self, system_user_id: int, phone_number: str) -> BoundTgAccountModel | None:
         accounts = (
             self._session.query(BoundTgAccountModel)

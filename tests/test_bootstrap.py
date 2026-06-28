@@ -143,3 +143,15 @@ def test_bot_role_runs_bot_process_instead_of_idle_wait():
     run_role("bot", bot_runner=lambda: calls.append("bot"), wait=lambda _role: calls.append("wait"))
 
     assert calls == ["bot"]
+
+
+def test_listener_role_runs_listener_process_instead_of_idle_wait():
+    calls = []
+
+    run_role(
+        "listener",
+        listener_runner=lambda: calls.append("listener"),
+        wait=lambda _role: calls.append("wait"),
+    )
+
+    assert calls == ["listener"]

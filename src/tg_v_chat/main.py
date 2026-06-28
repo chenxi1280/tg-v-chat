@@ -11,7 +11,7 @@ from tg_v_chat.services.auth import TelegramAuthenticator
 from tg_v_chat.services.relay import PrivateRelayService
 from tg_v_chat.storage.database import create_session_factory, require_postgresql_url
 from tg_v_chat.storage.repositories import UnitOfWork
-from tg_v_chat.telegram.telethon_clients import TelethonBotGateway, TelethonSenderPool
+from tg_v_chat.telegram.telethon_clients import TelethonBotGateway, TelethonReplySender, TelethonSenderPool
 from tg_v_chat.workers.runner import WorkerRunner
 
 
@@ -34,6 +34,7 @@ def build_runtime(
     session_key: str,
     bot_token: str,
     *,
+    app_configs: dict | None = None,
     allow_sqlite_for_tests: bool = False,
 ) -> Runtime:
     if not bot_token:
@@ -43,7 +44,7 @@ def build_runtime(
     cipher = SessionCipher(session_key)
     session_factory = create_session_factory(database_url)
     bot_gateway = TelethonBotGateway()
-    sender_pool = TelethonSenderPool()
+    sender_pool = _sender_pool(app_configs, cipher)
     handler = BotReplyHandler(_relay_factory(session_factory, bot_gateway, sender_pool))
     return Runtime(handler, bot_gateway, sender_pool, WorkerRunner(), session_factory, cipher)
 
@@ -59,3 +60,10 @@ def _relay_factory(session_factory, bot_gateway, sender_pool):
         return PrivateRelayService(unit, bot_gateway, sender_pool)
 
     return create_service
+
+
+def _sender_pool(app_configs: dict | None, cipher: SessionCipher) -> TelethonSenderPool:
+    if app_configs is None:
+        return TelethonSenderPool()
+    reply_sender = TelethonReplySender(app_configs, cipher)
+    return TelethonSenderPool(reply_sender.send_reply)
