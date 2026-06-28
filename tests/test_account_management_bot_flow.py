@@ -17,6 +17,7 @@ class FakeAuthenticator:
         self.code_failure = code_failure
         self.password_failure = password_failure
         self.started = []
+        self.codes = []
         self.passwords = []
 
     def start(self, phone_number, slot):
@@ -26,6 +27,7 @@ class FakeAuthenticator:
     def complete_code(self, challenge, code):
         if self.code_failure is not None:
             raise self.code_failure
+        self.codes.append(code)
         if self.needs_password:
             return AuthStep.PASSWORD_REQUIRED
         return "session-string"
@@ -46,6 +48,14 @@ def bot_parts():
     commands = []
     router = BotUpdateRouter(commands.append, service)
     return router, authenticator, commands, factory
+
+
+def submit_code_with_keypad(router, response, code="12345", user_id=146517):
+    for digit in code:
+        button = next(item for item in response.buttons if item.text == digit)
+        response = router.handle_callback(BotCallback(user_id, button.data))[0]
+    submit = next(item for item in response.buttons if item.text == "✅ 提交")
+    return router.handle_callback(BotCallback(user_id, submit.data))[0]
 
 
 def test_start_renders_account_management_home(bot_parts):
@@ -85,7 +95,48 @@ def test_bind_button_then_phone_prompts_code(bot_parts):
 
     assert "手机号" in prompt.text
     assert "验证码已发送" in code_prompt.text
+    assert "不要直接发送验证码消息" in code_prompt.text
+    assert [button.text for button in code_prompt.buttons[:3]] == ["1", "2", "3"]
+    assert any(button.text == "✅ 提交" for button in code_prompt.buttons)
     assert authenticator.started == [("+15550000001", DeveloperSlot.PRIMARY)]
+
+
+def test_plain_code_message_is_rejected_in_code_state():
+    factory = create_session_factory("sqlite:///:memory:")
+    init_db(factory)
+    authenticator = FakeAuthenticator()
+    service = AccountManagementService(factory, authenticator, SessionCipher("test-key"))
+    router = BotUpdateRouter(lambda _command: None, service)
+
+    router.handle_callback(BotCallback(146517, "account.bind.start"))
+    router.handle(BotIncomingMessage(146517, 11, None, "+15550000001"))
+    response = router.handle(BotIncomingMessage(146517, 12, None, "12345"))[0]
+
+    assert "不要直接发送验证码消息" in response.text
+    assert authenticator.codes == []
+    with UnitOfWork(factory) as uow:
+        user = uow.users.get_by_telegram_id(146517)
+        state = uow.conversation_states.get(user.id)
+        assert state.state == "awaiting_code"
+
+
+def test_code_keypad_submits_buffered_code():
+    factory = create_session_factory("sqlite:///:memory:")
+    init_db(factory)
+    authenticator = FakeAuthenticator()
+    service = AccountManagementService(factory, authenticator, SessionCipher("test-key"))
+    router = BotUpdateRouter(lambda _command: None, service)
+
+    router.handle_callback(BotCallback(146517, "account.bind.start"))
+    response = router.handle(BotIncomingMessage(146517, 11, None, "+15550000001"))[0]
+    for digit in "12345":
+        button = next(item for item in response.buttons if item.text == digit)
+        response = router.handle_callback(BotCallback(146517, button.data))[0]
+    submit = next(item for item in response.buttons if item.text == "✅ 提交")
+    response = router.handle_callback(BotCallback(146517, submit.data))[0]
+
+    assert "绑定成功" in response.text
+    assert authenticator.codes == ["12345"]
 
 
 def test_code_and_password_complete_binding():
@@ -96,8 +147,8 @@ def test_code_and_password_complete_binding():
     router = BotUpdateRouter(lambda _command: None, service)
 
     router.handle_callback(BotCallback(146517, "account.bind.start"))
-    router.handle(BotIncomingMessage(146517, 11, None, "+15550000001"))
-    password_prompt = router.handle(BotIncomingMessage(146517, 12, None, "12345"))[0]
+    code_prompt = router.handle(BotIncomingMessage(146517, 11, None, "+15550000001"))[0]
+    password_prompt = submit_code_with_keypad(router, code_prompt)
     success = router.handle(BotIncomingMessage(146517, 13, None, "secret"))[0]
 
     assert "2FA" in password_prompt.text
@@ -119,8 +170,8 @@ def test_invalid_code_keeps_code_state():
     router = BotUpdateRouter(lambda _command: None, service)
 
     router.handle_callback(BotCallback(146517, "account.bind.start"))
-    router.handle(BotIncomingMessage(146517, 11, None, "+15550000001"))
-    response = router.handle(BotIncomingMessage(146517, 12, None, "12345"))[0]
+    code_prompt = router.handle(BotIncomingMessage(146517, 11, None, "+15550000001"))[0]
+    response = submit_code_with_keypad(router, code_prompt)
 
     assert "验证码不正确" in response.text
     with UnitOfWork(factory) as uow:
@@ -138,8 +189,8 @@ def test_expired_code_cancels_binding_state():
     router = BotUpdateRouter(lambda _command: None, service)
 
     router.handle_callback(BotCallback(146517, "account.bind.start"))
-    router.handle(BotIncomingMessage(146517, 11, None, "+15550000001"))
-    response = router.handle(BotIncomingMessage(146517, 12, None, "12345"))[0]
+    code_prompt = router.handle(BotIncomingMessage(146517, 11, None, "+15550000001"))[0]
+    response = submit_code_with_keypad(router, code_prompt)
 
     assert "验证码已过期" in response.text
     with UnitOfWork(factory) as uow:
@@ -196,6 +247,9 @@ def test_relogin_restarts_abandoned_binding_with_same_phone():
     response = router.handle_callback(BotCallback(146517, relogin.data))[0]
 
     assert "验证码已重新发送" in response.text
+    assert "不要直接发送验证码消息" in response.text
+    assert [button.text for button in response.buttons[:3]] == ["1", "2", "3"]
+    assert any(button.text == "✅ 提交" for button in response.buttons)
     assert authenticator.started == [
         ("+15550000001", DeveloperSlot.PRIMARY),
         ("+15550000001", DeveloperSlot.PRIMARY),
@@ -240,8 +294,8 @@ def test_wrong_password_keeps_password_state():
     router = BotUpdateRouter(lambda _command: None, service)
 
     router.handle_callback(BotCallback(146517, "account.bind.start"))
-    router.handle(BotIncomingMessage(146517, 11, None, "+15550000001"))
-    router.handle(BotIncomingMessage(146517, 12, None, "12345"))
+    code_prompt = router.handle(BotIncomingMessage(146517, 11, None, "+15550000001"))[0]
+    submit_code_with_keypad(router, code_prompt)
     response = router.handle(BotIncomingMessage(146517, 13, None, "wrong"))[0]
 
     assert "二次密码不正确" in response.text
@@ -254,8 +308,8 @@ def test_wrong_password_keeps_password_state():
 def test_accounts_list_masks_phone_number(bot_parts):
     router, _authenticator, _commands, _factory = bot_parts
     router.handle_callback(BotCallback(146517, "account.bind.start"))
-    router.handle(BotIncomingMessage(146517, 11, None, "+15550000001"))
-    router.handle(BotIncomingMessage(146517, 12, None, "12345"))
+    code_prompt = router.handle(BotIncomingMessage(146517, 11, None, "+15550000001"))[0]
+    submit_code_with_keypad(router, code_prompt)
 
     response = router.handle(BotIncomingMessage(146517, 13, None, "/accounts"))[0]
 
@@ -267,8 +321,8 @@ def test_accounts_list_masks_phone_number(bot_parts):
 def test_account_detail_and_disable_are_scoped_to_owner(bot_parts):
     router, _authenticator, _commands, _factory = bot_parts
     router.handle_callback(BotCallback(146517, "account.bind.start"))
-    router.handle(BotIncomingMessage(146517, 11, None, "+15550000001"))
-    router.handle(BotIncomingMessage(146517, 12, None, "12345"))
+    code_prompt = router.handle(BotIncomingMessage(146517, 11, None, "+15550000001"))[0]
+    submit_code_with_keypad(router, code_prompt)
     list_response = router.handle_callback(BotCallback(146517, "account.list"))[0]
 
     detail = router.handle_callback(BotCallback(146517, list_response.buttons[0].data))[0]
@@ -286,8 +340,8 @@ def test_account_detail_and_disable_are_scoped_to_owner(bot_parts):
 def test_active_account_can_be_deleted_from_detail(bot_parts):
     router, _authenticator, _commands, factory = bot_parts
     router.handle_callback(BotCallback(146517, "account.bind.start"))
-    router.handle(BotIncomingMessage(146517, 11, None, "+15550000001"))
-    router.handle(BotIncomingMessage(146517, 12, None, "12345"))
+    code_prompt = router.handle(BotIncomingMessage(146517, 11, None, "+15550000001"))[0]
+    submit_code_with_keypad(router, code_prompt)
     list_response = router.handle_callback(BotCallback(146517, "account.list"))[0]
 
     detail = router.handle_callback(BotCallback(146517, list_response.buttons[0].data))[0]
