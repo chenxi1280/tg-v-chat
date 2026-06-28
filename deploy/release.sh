@@ -150,12 +150,18 @@ run_with_retries "Installing remote release" timeout "$REMOTE_INSTALL_TIMEOUT_SE
   ssh "${SSH_OPTS[@]}" "${USER_NAME}@${HOST}" "\
 set -euo pipefail && \
 mkdir -p '${BASE_DIR}/incoming' '${BASE_DIR}/releases' && \
+existing_image_env='' && \
+if [[ -f '${remote_release_dir}/.image.env' ]]; then \
+  existing_image_env=\"\$(mktemp '/tmp/tg-v-chat-existing-image-env.XXXXXX')\" && \
+  cp '${remote_release_dir}/.image.env' \"\${existing_image_env}\"; \
+fi && \
 if [[ -f '${remote_tmp_archive}' ]]; then mv -f '${remote_tmp_archive}' '${remote_archive}'; fi && \
 if [[ ! -f '${remote_archive}' ]]; then echo 'Missing release archive: ${remote_archive}' >&2; exit 1; fi && \
 rm -rf '${remote_release_dir}' && \
 mkdir -p '${remote_release_dir}' && \
 if [[ -f '${remote_archive}' ]]; then tar -xzf '${remote_archive}' -C '${remote_release_dir}'; fi && \
 if [[ -f '${remote_image_env}' ]]; then mv -f '${remote_image_env}' '${remote_release_dir}/.image.env'; fi && \
+if [[ ! -f '${remote_release_dir}/.image.env' && -n \"\${existing_image_env}\" ]]; then mv -f \"\${existing_image_env}\" '${remote_release_dir}/.image.env'; fi && \
 if [[ ! -f '${remote_release_dir}/.image.env' ]]; then echo 'Missing image env: ${remote_release_dir}/.image.env' >&2; exit 1; fi && \
 GHCR_USERNAME=$(printf '%q' "${GHCR_USERNAME:-}") \
 GHCR_TOKEN=$(printf '%q' "${GHCR_TOKEN:-}") \
