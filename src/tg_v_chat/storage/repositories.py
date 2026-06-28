@@ -99,6 +99,11 @@ class AccountRepository:
         self._session.flush()
         return account
 
+    def delete(self, account_id: int) -> None:
+        account = self.get(account_id)
+        self._session.delete(account)
+        self._session.flush()
+
 
 class SessionSlotRepository:
     def __init__(self, session):
@@ -163,6 +168,11 @@ class AuthChallengeRepository:
             .order_by(AuthChallengeModel.id.asc())
             .all()
         )
+
+    def delete_for_account(self, account_id: int) -> None:
+        for challenge in self.list_for_account(account_id):
+            self._session.delete(challenge)
+        self._session.flush()
 
 
 class ConversationStateRepository:

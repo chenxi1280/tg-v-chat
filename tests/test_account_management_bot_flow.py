@@ -202,14 +202,16 @@ def test_relogin_restarts_abandoned_binding_with_same_phone():
     ]
     with UnitOfWork(factory) as uow:
         user = uow.users.get_by_telegram_id(146517)
-        old_account, new_account = uow.accounts.list_for_user(user.id)
+        accounts = uow.accounts.list_for_user(user.id)
         state = uow.conversation_states.get(user.id)
-        assert old_account.status == "disabled"
-        assert new_account.status == "binding"
-        assert uow.auth_challenges.get(1).status == "cancelled"
-        assert uow.auth_challenges.get(2).status == "code_required"
+        assert len(accounts) == 1
+        assert accounts[0].phone_number == "+15550000001"
+        assert accounts[0].status == "binding"
+        challenges = uow.auth_challenges.list_for_account(accounts[0].id)
+        assert len(challenges) == 1
+        assert challenges[0].status == "code_required"
         assert state.state == "awaiting_code"
-        assert state.auth_challenge_id == 2
+        assert state.auth_challenge_id == challenges[0].id
 
 
 def test_disabled_accounts_do_not_block_new_binding():

@@ -125,11 +125,11 @@ class AccountManagementService:
             account = uow.accounts.get_for_user(account_id, user.id)
             if account.status == ACCOUNT_STATUS_ACTIVE:
                 return BotResponse("该账号当前无需重新登录。", buttons=_home_nav_buttons())
-            _cancel_account_challenges(uow, account.id)
-            uow.accounts.mark_disabled(account.id)
+            phone_number = account.phone_number
+            _delete_incomplete_account(uow, account.id)
             uow.conversation_states.clear(user.id)
             auth = AuthService(uow, self._authenticator, self._cipher)
-            challenge = auth.start_binding(telegram_user_id, account.phone_number, DeveloperSlot.PRIMARY)
+            challenge = auth.start_binding(telegram_user_id, phone_number, DeveloperSlot.PRIMARY)
             uow.conversation_states.set(user.id, STATE_AWAITING_CODE, challenge.id)
             uow.commit()
         return BotResponse("验证码已重新发送，请输入 Telegram 收到的验证码。", buttons=_cancel_buttons())
@@ -357,8 +357,9 @@ def _cancel_challenges(uow, challenges) -> None:
             uow.auth_challenges.mark_status(challenge.id, AUTH_STATUS_CANCELLED)
 
 
-def _cancel_account_challenges(uow, account_id: int) -> None:
-    _cancel_challenges(uow, uow.auth_challenges.list_for_account(account_id))
+def _delete_incomplete_account(uow, account_id: int) -> None:
+    uow.auth_challenges.delete_for_account(account_id)
+    uow.accounts.delete(account_id)
 
 
 def _first_relogin_account(accounts):
