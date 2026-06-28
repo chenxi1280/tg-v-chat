@@ -31,11 +31,16 @@ class AuthChallenge:
     bound_tg_account_id: int | None = None
 
 
+@dataclass(frozen=True)
+class PasswordRequired:
+    pending_session: str
+
+
 class TelegramAuthenticator(Protocol):
     def start(self, phone_number: str, slot: DeveloperSlot) -> AuthChallenge:
         raise NotImplementedError
 
-    def complete_code(self, challenge: AuthChallenge, code: str) -> str | AuthStep:
+    def complete_code(self, challenge: AuthChallenge, code: str) -> str | AuthStep | PasswordRequired:
         raise NotImplementedError
 
     def complete_password(self, challenge: AuthChallenge, password: str) -> str:
@@ -50,9 +55,14 @@ class AuthService:
 
     def start_binding(self, telegram_user_id: int, phone_number: str, slot: DeveloperSlot) -> AuthChallenge:
         user = self._uow.users.get_or_create(telegram_user_id)
-        if self._uow.accounts.count_for_user(user.id) >= MAX_BOUND_ACCOUNTS:
-            raise ValueError("每个系统用户最多绑定 20 个 Telegram 账号")
-        account = self._uow.accounts.create(user.id, phone_number)
+        account = self._uow.accounts.find_incomplete_for_user_phone(user.id, phone_number)
+        if account is None:
+            if self._uow.accounts.count_for_user(user.id) >= MAX_BOUND_ACCOUNTS:
+                raise ValueError("每个系统用户最多绑定 20 个 Telegram 账号")
+            account = self._uow.accounts.create(user.id, phone_number)
+        else:
+            self._uow.auth_challenges.delete_for_account(account.id)
+            account = self._uow.accounts.mark_binding(account.id)
         external = self._authenticator.start(phone_number, slot)
         pending_session = _encrypt_optional(self._cipher, external.pending_session)
         challenge = self._uow.auth_challenges.create(
@@ -69,6 +79,11 @@ class AuthService:
         model = self._uow.auth_challenges.get(challenge_id)
         challenge = _challenge_from_model(model, self._cipher, include_pending=True)
         result = self._authenticator.complete_code(challenge, code)
+        if isinstance(result, PasswordRequired):
+            model.pending_session = self._cipher.encrypt(result.pending_session)
+            model.status = AuthStep.PASSWORD_REQUIRED.value
+            self._uow.commit()
+            return AuthStep.PASSWORD_REQUIRED
         if result is AuthStep.PASSWORD_REQUIRED:
             model.status = AuthStep.PASSWORD_REQUIRED.value
             self._uow.commit()

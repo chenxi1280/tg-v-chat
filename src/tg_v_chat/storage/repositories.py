@@ -70,6 +70,16 @@ class AccountRepository:
             .all()
         )
 
+    def find_incomplete_for_user_phone(self, system_user_id: int, phone_number: str) -> BoundTgAccountModel | None:
+        accounts = (
+            self._session.query(BoundTgAccountModel)
+            .filter_by(system_user_id=system_user_id, phone_number=phone_number)
+            .filter(BoundTgAccountModel.status.notin_(("active", "deleted")))
+            .order_by(BoundTgAccountModel.id.asc())
+            .all()
+        )
+        return next((account for account in accounts if not self._has_sessions(account.id)), None)
+
     def create(self, system_user_id: int, phone_number: str) -> BoundTgAccountModel:
         account = BoundTgAccountModel(system_user_id=system_user_id, phone_number=phone_number)
         self._session.add(account)
@@ -94,6 +104,12 @@ class AccountRepository:
         self._session.flush()
         return account
 
+    def mark_binding(self, account_id: int) -> BoundTgAccountModel:
+        account = self.get(account_id)
+        account.status = "binding"
+        self._session.flush()
+        return account
+
     def mark_disabled(self, account_id: int) -> BoundTgAccountModel:
         account = self.get(account_id)
         account.status = "disabled"
@@ -110,6 +126,9 @@ class AccountRepository:
         account = self.get(account_id)
         self._session.delete(account)
         self._session.flush()
+
+    def _has_sessions(self, account_id: int) -> bool:
+        return self._session.query(TgSessionSlotModel.id).filter_by(bound_tg_account_id=account_id).first() is not None
 
 
 class SessionSlotRepository:

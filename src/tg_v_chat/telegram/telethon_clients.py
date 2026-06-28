@@ -5,7 +5,7 @@ from typing import Callable
 
 from tg_v_chat.bot.router import BotCallback, BotIncomingMessage, BotResponse, BotUpdateRouter
 from tg_v_chat.domain import IncomingPrivateMessage, OutgoingReply, SessionFailure, SessionSlotRef
-from tg_v_chat.services.auth import AuthChallenge, AuthFailure, AuthStep
+from tg_v_chat.services.auth import AuthChallenge, AuthFailure, AuthStep, PasswordRequired
 
 
 @dataclass(frozen=True)
@@ -45,7 +45,6 @@ class TelethonSenderPool:
 class TelethonAuthenticator:
     def __init__(self, app_config: DeveloperAppConfig):
         self._app_config = app_config
-        self._partial_sessions: dict[str, str] = {}
 
     def start(self, phone_number, slot):
         code_hash, pending_session = _run_async(self._send_code(phone_number))
@@ -55,12 +54,9 @@ class TelethonAuthenticator:
         return _run_async(self._sign_in_with_code(challenge, code))
 
     def complete_password(self, challenge, password):
-        partial_session = self._partial_sessions.get(challenge.phone_code_hash)
-        if partial_session is None:
+        if challenge.pending_session is None:
             raise AuthFailure("当前 2FA 登录会话已失效，请重新开始绑定。", restart_required=True)
-        session = _run_async(self._sign_in_with_password(partial_session, password))
-        self._partial_sessions.pop(challenge.phone_code_hash, None)
-        return session
+        return _run_async(self._sign_in_with_password(challenge.pending_session, password))
 
     async def _send_code(self, phone_number: str) -> tuple[str, str]:
         from telethon import TelegramClient
@@ -98,8 +94,7 @@ class TelethonAuthenticator:
             await client.sign_in(challenge.phone_number, code, phone_code_hash=challenge.phone_code_hash)
             return client.session.save()
         except SessionPasswordNeededError:
-            self._partial_sessions[challenge.phone_code_hash] = client.session.save()
-            return AuthStep.PASSWORD_REQUIRED
+            return PasswordRequired(client.session.save())
         except (PhoneCodeExpiredError, PhoneCodeHashEmptyError) as exc:
             raise AuthFailure("验证码已过期，请重新开始绑定。", restart_required=True) from exc
         except (PhoneCodeEmptyError, PhoneCodeInvalidError) as exc:

@@ -9,7 +9,7 @@ from tg_v_chat.domain import (
     SessionFailure,
     SessionStatus,
 )
-from tg_v_chat.services.auth import AuthChallenge, AuthService, AuthStep
+from tg_v_chat.services.auth import AuthChallenge, AuthService, AuthStep, PasswordRequired
 from tg_v_chat.services.relay import PrivateRelayService
 from tg_v_chat.storage.database import create_session_factory, init_db
 from tg_v_chat.storage.repositories import UnitOfWork
@@ -32,6 +32,20 @@ class FakeAuthenticator:
 
     def complete_password(self, challenge, password):
         self.password_checked = True
+        return "session-string-2fa"
+
+
+class PasswordRequiredAuthenticator(FakeAuthenticator):
+    def __init__(self):
+        super().__init__(needs_password=True)
+        self.password_challenge_pending_session = None
+
+    def complete_code(self, challenge, code):
+        self.code_challenge_pending_session = challenge.pending_session
+        return PasswordRequired("partial-session-after-code")
+
+    def complete_password(self, challenge, password):
+        self.password_challenge_pending_session = challenge.pending_session
         return "session-string-2fa"
 
 
@@ -116,6 +130,20 @@ def test_binding_preserves_pending_login_session_encrypted(uow):
     assert cipher.decrypt(model.pending_session) == "pending-session"
     assert auth.submit_code(challenge.id, "12345") is AuthStep.COMPLETE
     assert authenticator.code_challenge_pending_session == "pending-session"
+
+
+def test_2fa_password_uses_persisted_partial_session(uow):
+    authenticator = PasswordRequiredAuthenticator()
+    cipher = SessionCipher("test-key")
+    auth = AuthService(uow, authenticator, cipher)
+    challenge = auth.start_binding(1, "+15550000001", DeveloperSlot.PRIMARY)
+
+    assert auth.submit_code(challenge.id, "12345") is AuthStep.PASSWORD_REQUIRED
+    model = uow.auth_challenges.get(challenge.id)
+    assert cipher.decrypt(model.pending_session) == "partial-session-after-code"
+    auth.submit_password(challenge.id, "secret")
+
+    assert authenticator.password_challenge_pending_session == "partial-session-after-code"
 
 
 def test_incoming_private_message_is_idempotent_and_album_ordered(uow):
