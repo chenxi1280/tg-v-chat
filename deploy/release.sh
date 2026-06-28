@@ -150,11 +150,13 @@ run_with_retries "Installing remote release" timeout "$REMOTE_INSTALL_TIMEOUT_SE
   ssh "${SSH_OPTS[@]}" "${USER_NAME}@${HOST}" "\
 set -euo pipefail && \
 mkdir -p '${BASE_DIR}/incoming' '${BASE_DIR}/releases' && \
-mv -f '${remote_tmp_archive}' '${remote_archive}' && \
+if [[ -f '${remote_tmp_archive}' ]]; then mv -f '${remote_tmp_archive}' '${remote_archive}'; fi && \
+if [[ ! -f '${remote_archive}' ]]; then echo 'Missing release archive: ${remote_archive}' >&2; exit 1; fi && \
 rm -rf '${remote_release_dir}' && \
 mkdir -p '${remote_release_dir}' && \
-tar -xzf '${remote_archive}' -C '${remote_release_dir}' && \
-mv -f '${remote_image_env}' '${remote_release_dir}/.image.env' && \
+if [[ -f '${remote_archive}' ]]; then tar -xzf '${remote_archive}' -C '${remote_release_dir}'; fi && \
+if [[ -f '${remote_image_env}' ]]; then mv -f '${remote_image_env}' '${remote_release_dir}/.image.env'; fi && \
+if [[ ! -f '${remote_release_dir}/.image.env' ]]; then echo 'Missing image env: ${remote_release_dir}/.image.env' >&2; exit 1; fi && \
 GHCR_USERNAME=$(printf '%q' "${GHCR_USERNAME:-}") \
 GHCR_TOKEN=$(printf '%q' "${GHCR_TOKEN:-}") \
 POST_DEPLOY_CHECKS_ENABLED=$(printf '%q' "${POST_DEPLOY_CHECKS_ENABLED:-}") \
