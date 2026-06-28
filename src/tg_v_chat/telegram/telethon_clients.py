@@ -186,12 +186,32 @@ def _reply_to_message_id(message) -> int | None:
     return getattr(reply, "reply_to_msg_id", None)
 
 
+CODE_KEYPAD_ROW_WIDTHS = (3, 3, 3, 3, 2, 1)
+
+
 def _buttons(response: BotResponse):
     if not response.buttons:
         return None
     from telethon import Button
 
-    return [Button.inline(button.text, button.data.encode("utf-8")) for button in response.buttons]
+    buttons = [Button.inline(button.text, button.data.encode("utf-8")) for button in response.buttons]
+    if _is_code_keypad(response.buttons):
+        return _chunk_buttons(buttons, CODE_KEYPAD_ROW_WIDTHS)
+    return buttons
+
+
+def _is_code_keypad(buttons) -> bool:
+    expected_count = sum(CODE_KEYPAD_ROW_WIDTHS)
+    return len(buttons) == expected_count and any(button.data.startswith("account.code.") for button in buttons)
+
+
+def _chunk_buttons(buttons, row_widths: tuple[int, ...]):
+    rows = []
+    cursor = 0
+    for width in row_widths:
+        rows.append(buttons[cursor : cursor + width])
+        cursor += width
+    return rows
 
 
 async def _send_callback_response(event, response: BotResponse) -> None:

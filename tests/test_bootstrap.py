@@ -5,7 +5,7 @@ from tg_v_chat.bot.router import BotIncomingMessage, BotUpdateRouter
 from tg_v_chat.config import load_config
 from tg_v_chat.main import build_runtime
 from tg_v_chat.runtime import run_role
-from tg_v_chat.telegram.telethon_clients import TelethonBotGateway, TelethonSenderPool
+from tg_v_chat.telegram.telethon_clients import TelethonBotGateway, TelethonSenderPool, _buttons
 from tg_v_chat.workers.runner import WorkerRunner
 
 
@@ -83,6 +83,22 @@ def test_bot_router_replies_to_start_and_admin_commands():
     assert start[0].reply_to_message_id == 10
     assert [button.text for button in start[0].buttons] == ["绑定 TG 账号"]
     assert admin[0].text == "账号管理 146517 /admin"
+
+
+def test_telegram_login_code_buttons_are_rendered_as_keypad_rows():
+    from tg_v_chat.bot.code_keypad import CodePrompt, code_prompt_response
+
+    response = code_prompt_response(CodePrompt(7, "+15550****0001"))
+    rows = _buttons(response)
+
+    assert [[button.text for button in row] for row in rows] == [
+        ["1", "2", "3"],
+        ["4", "5", "6"],
+        ["7", "8", "9"],
+        ["清空", "0", "删除"],
+        ["✅ 提交", "🔄 重发验证码"],
+        ["⬅️ 取消绑定"],
+    ]
 
 
 def test_bot_router_handles_replies_through_handler():

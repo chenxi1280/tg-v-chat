@@ -96,8 +96,23 @@ def test_bind_button_then_phone_prompts_code(bot_parts):
     assert "手机号" in prompt.text
     assert "验证码已发送" in code_prompt.text
     assert "不要直接发送验证码消息" in code_prompt.text
-    assert [button.text for button in code_prompt.buttons[:3]] == ["1", "2", "3"]
-    assert any(button.text == "✅ 提交" for button in code_prompt.buttons)
+    assert [button.text for button in code_prompt.buttons] == [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "清空",
+        "0",
+        "删除",
+        "✅ 提交",
+        "🔄 重发验证码",
+        "⬅️ 取消绑定",
+    ]
     assert authenticator.started == [("+15550000001", DeveloperSlot.PRIMARY)]
 
 

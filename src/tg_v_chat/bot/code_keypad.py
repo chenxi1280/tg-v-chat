@@ -84,8 +84,8 @@ def _code_buttons(challenge_id: int, buffer: str) -> tuple[ButtonSpec, ...]:
         ButtonSpec("0", _code_digit_data(challenge_id, buffer, "0")),
         ButtonSpec("删除", f"account.code.backspace:{challenge_id}:{buffer}"),
         ButtonSpec("✅ 提交", f"account.code.submit:{challenge_id}:{buffer}"),
-        ButtonSpec("重发验证码", f"account.code.resend:{challenge_id}"),
-        ButtonSpec("取消绑定", "account.bind.cancel"),
+        ButtonSpec("🔄 重发验证码", f"account.code.resend:{challenge_id}"),
+        ButtonSpec("⬅️ 取消绑定", "account.bind.cancel"),
     )
 
 
