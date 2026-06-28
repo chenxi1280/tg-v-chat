@@ -96,6 +96,23 @@ def create_active_account(uow, system_user_id=1):
     return account
 
 
+def test_private_push_uses_telegram_user_id_and_stores_internal_owner(uow):
+    telegram_user_id = 7_677_366_761
+    account = create_active_account(uow, system_user_id=telegram_user_id)
+    bot = FakeBotGateway()
+    relay = PrivateRelayService(uow, bot, FakeSenderPool())
+
+    pushed = relay.receive_private_message(
+        IncomingPrivateMessage(account.id, 88, 101, MediaKind.TEXT, "hi", None, 0)
+    )
+    push = uow.pushes.get_by_relay(pushed.relay_message_id)
+    mapping = uow.mappings.get_by_bot_message(pushed.bot_message_id)
+
+    assert bot.pushes[0][0] == telegram_user_id
+    assert push.system_user_id == account.system_user_id
+    assert mapping.system_user_id == account.system_user_id
+
+
 def test_binding_rejects_twenty_first_account(uow):
     auth = AuthService(uow, FakeAuthenticator(), SessionCipher("test-key"))
     for index in range(20):
@@ -178,19 +195,21 @@ def test_reply_uses_mapping_and_fails_explicitly_without_reply(uow):
 
 
 def test_reply_rejects_cross_user_mapping_without_sending(uow):
-    account = create_active_account(uow, system_user_id=1)
+    telegram_user_id = 7_677_366_761
+    account = create_active_account(uow, system_user_id=telegram_user_id)
     senders = FakeSenderPool()
     relay = PrivateRelayService(uow, FakeBotGateway(), senders)
     pushed = relay.receive_private_message(
         IncomingPrivateMessage(account.id, 88, 101, MediaKind.TEXT, "hi", None, 0)
     )
+    uow.users.get_or_create(2)
 
     with pytest.raises(PermissionError, match="无权使用"):
         relay.handle_bot_reply(OutgoingReply(2, 703, pushed.bot_message_id, MediaKind.TEXT, "cross-user"))
 
     assert senders.sent == []
 
-    relay.handle_bot_reply(OutgoingReply(1, 704, pushed.bot_message_id, MediaKind.TEXT, "owner"))
+    relay.handle_bot_reply(OutgoingReply(telegram_user_id, 704, pushed.bot_message_id, MediaKind.TEXT, "owner"))
     with pytest.raises(PermissionError, match="无权使用"):
         relay.handle_bot_reply(OutgoingReply(2, 704, pushed.bot_message_id, MediaKind.TEXT, "reply-id-collision"))
 

@@ -15,10 +15,10 @@ from tg_v_chat.domain import (
 
 
 class BotGateway(Protocol):
-    def push_private_message(self, system_user_id: int, message: IncomingPrivateMessage) -> int:
+    def push_private_message(self, telegram_user_id: int, message: IncomingPrivateMessage) -> int:
         raise NotImplementedError
 
-    def notify_failure(self, system_user_id: int, text: str) -> None:
+    def notify_failure(self, telegram_user_id: int, text: str) -> None:
         raise NotImplementedError
 
 
@@ -40,8 +40,8 @@ class PrivateRelayService:
         if self._should_defer_album(message):
             self._uow.commit()
             return IncomingRelayResult(relay.id, None, False)
-        account = self._uow.accounts.get(message.bound_tg_account_id)
-        self._push_ready_relays(account.system_user_id, message, relay)
+        owner = self._owner_for_account(message.bound_tg_account_id)
+        self._push_ready_relays(owner.id, owner.telegram_user_id, message, relay)
         self._uow.commit()
         push = self._uow.pushes.get_by_relay(relay.id)
         return IncomingRelayResult(relay.id, push.bot_message_id if push else None, False)
@@ -51,22 +51,23 @@ class PrivateRelayService:
         return [relay.id for relay in relays]
 
     def handle_bot_reply(self, reply: OutgoingReply) -> OutgoingRelayResult:
+        internal_user_id = self._internal_user_id(reply.system_user_id)
         if reply.reply_to_message_id is None:
             raise ValueError("用户必须 reply Bot 推送消息才能代发")
         existing = self._uow.outgoing.get_by_reply(reply.bot_reply_message_id)
         if existing:
-            if existing.system_user_id != reply.system_user_id:
+            if existing.system_user_id != internal_user_id:
                 raise PermissionError("无权使用其他用户的 outgoing reply")
             return _outgoing_result(existing, True)
         mapping = self._uow.mappings.get_by_bot_message(reply.reply_to_message_id)
         if not mapping:
             raise LookupError("ReplyMapping 不存在，无法代发")
-        if mapping.system_user_id != reply.system_user_id:
+        if mapping.system_user_id != internal_user_id:
             raise PermissionError("无权使用其他用户的 ReplyMapping")
         sent_id, slot = self._send_with_failover(mapping, reply)
         row = self._uow.outgoing.create(
             reply.bot_reply_message_id,
-            reply.system_user_id,
+            internal_user_id,
             mapping.relay_message_id,
             sent_id,
             slot,
@@ -83,20 +84,33 @@ class PrivateRelayService:
             return False
         return not self._uow.relays.has_media_sequence(message.bound_tg_account_id, message.media_group_id, 1)
 
-    def _push_ready_relays(self, system_user_id: int, message: IncomingPrivateMessage, current_relay) -> None:
+    def _owner_for_account(self, account_id: int):
+        account = self._uow.accounts.get(account_id)
+        return self._uow.users.get(account.system_user_id)
+
+    def _internal_user_id(self, telegram_user_id: int) -> int:
+        return self._uow.users.get_by_telegram_id(telegram_user_id).id
+
+    def _push_ready_relays(
+        self,
+        internal_user_id: int,
+        telegram_user_id: int,
+        message: IncomingPrivateMessage,
+        current_relay,
+    ) -> None:
         relays = [current_relay]
         if message.media_group_id:
             relays = self._uow.relays.list_media_group(message.bound_tg_account_id, message.media_group_id)
         for relay in relays:
             if self._uow.pushes.get_by_relay(relay.id):
                 continue
-            self._push_relay(system_user_id, relay)
+            self._push_relay(internal_user_id, telegram_user_id, relay)
 
-    def _push_relay(self, system_user_id: int, relay) -> None:
+    def _push_relay(self, internal_user_id: int, telegram_user_id: int, relay) -> None:
         message = _message_from_relay(relay)
-        bot_message_id = self._bot.push_private_message(system_user_id, message)
-        self._uow.pushes.create(relay.id, system_user_id, bot_message_id)
-        self._uow.mappings.create(bot_message_id, relay, system_user_id)
+        bot_message_id = self._bot.push_private_message(telegram_user_id, message)
+        self._uow.pushes.create(relay.id, internal_user_id, bot_message_id)
+        self._uow.mappings.create(bot_message_id, relay, internal_user_id)
 
     def _send_with_failover(self, mapping, reply: OutgoingReply) -> tuple[int, DeveloperSlot]:
         slots = self._healthy_slots(mapping.bound_tg_account_id)
