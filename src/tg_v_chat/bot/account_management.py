@@ -15,6 +15,7 @@ STATE_AWAITING_PASSWORD = "awaiting_password"
 ACCOUNT_STATUS_ACTIVE = "active"
 ACCOUNT_STATUS_BINDING = "binding"
 ACCOUNT_STATUS_DISABLED = "disabled"
+ACCOUNT_STATUS_DELETED = "deleted"
 AUTH_STATUS_CANCELLED = "cancelled"
 PHONE_PATTERN = re.compile(r"^\+\d{8,15}$")
 
@@ -57,6 +58,10 @@ class AccountManagementService:
             return self.disable_confirm(telegram_user_id, _parse_id(data))
         if data.startswith("account.disable:"):
             return self.disable(telegram_user_id, _parse_id(data))
+        if data.startswith("account.delete.confirm:"):
+            return self.delete_confirm(telegram_user_id, _parse_id(data))
+        if data.startswith("account.delete:"):
+            return self.delete(telegram_user_id, _parse_id(data))
         handler = actions.get(data, self.home)
         return handler(telegram_user_id)
 
@@ -118,6 +123,20 @@ class AccountManagementService:
             uow.accounts.mark_disabled(account_id)
             uow.commit()
         return BotResponse("账号已禁用。", buttons=_home_nav_buttons())
+
+    def delete_confirm(self, telegram_user_id: int, account_id: int) -> BotResponse:
+        with UnitOfWork(self._session_factory) as uow:
+            user = uow.users.get_or_create(telegram_user_id)
+            account = uow.accounts.get_for_user(account_id, user.id)
+            return BotResponse(_delete_confirm_text(account), buttons=_delete_confirm_buttons(account.id))
+
+    def delete(self, telegram_user_id: int, account_id: int) -> BotResponse:
+        with UnitOfWork(self._session_factory) as uow:
+            user = uow.users.get_or_create(telegram_user_id)
+            account = uow.accounts.get_for_user(account_id, user.id)
+            _delete_account_for_user(uow, user.id, account)
+            uow.commit()
+        return BotResponse("账号已删除。", buttons=_home_nav_buttons())
 
     def relogin(self, telegram_user_id: int, account_id: int) -> BotResponse:
         with UnitOfWork(self._session_factory) as uow:
@@ -290,7 +309,11 @@ def _cancel_buttons() -> tuple[ButtonSpec, ...]:
 
 
 def _detail_buttons(account) -> tuple[ButtonSpec, ...]:
-    buttons = [ButtonSpec("返回账号列表", "account.list"), ButtonSpec("返回首页", "account.home")]
+    buttons = [
+        ButtonSpec("删除账号", f"account.delete.confirm:{account.id}"),
+        ButtonSpec("返回账号列表", "account.list"),
+        ButtonSpec("返回首页", "account.home"),
+    ]
     if account.status != "disabled":
         buttons.insert(0, ButtonSpec("禁用账号", f"account.disable.confirm:{account.id}"))
     return tuple(buttons)
@@ -311,6 +334,24 @@ def _disable_confirm_text(account) -> str:
 def _disable_confirm_buttons(account_id: int) -> tuple[ButtonSpec, ...]:
     return (
         ButtonSpec("确认禁用", f"account.disable:{account_id}"),
+        ButtonSpec("取消", f"account.detail:{account_id}"),
+    )
+
+
+def _delete_confirm_text(account) -> str:
+    return "\n".join(
+        (
+            "确认删除这个账号？",
+            "",
+            f"账号：{_mask_phone(account.phone_number)}",
+            "删除后会从账号管理列表移除；未完成登录的账号会直接清除。",
+        )
+    )
+
+
+def _delete_confirm_buttons(account_id: int) -> tuple[ButtonSpec, ...]:
+    return (
+        ButtonSpec("确认删除", f"account.delete:{account_id}"),
         ButtonSpec("取消", f"account.detail:{account_id}"),
     )
 
@@ -360,6 +401,25 @@ def _cancel_challenges(uow, challenges) -> None:
 def _delete_incomplete_account(uow, account_id: int) -> None:
     uow.auth_challenges.delete_for_account(account_id)
     uow.accounts.delete(account_id)
+
+
+def _delete_account_for_user(uow, user_id: int, account) -> None:
+    state = uow.conversation_states.get(user_id)
+    if state is not None and _state_belongs_to_account(uow, state, account.id):
+        uow.conversation_states.clear(user_id)
+    uow.auth_challenges.delete_for_account(account.id)
+    if account.status != ACCOUNT_STATUS_ACTIVE:
+        uow.accounts.delete(account.id)
+        return
+    uow.sessions.delete_for_account(account.id)
+    uow.accounts.mark_deleted(account.id)
+
+
+def _state_belongs_to_account(uow, state, account_id: int) -> bool:
+    if state.auth_challenge_id is None:
+        return False
+    challenge = uow.auth_challenges.get(state.auth_challenge_id)
+    return challenge.bound_tg_account_id == account_id
 
 
 def _first_relogin_account(accounts):

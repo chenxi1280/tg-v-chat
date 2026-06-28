@@ -49,14 +49,15 @@ class AccountRepository:
         return (
             self._session.query(BoundTgAccountModel)
             .filter(BoundTgAccountModel.system_user_id == system_user_id)
-            .filter(BoundTgAccountModel.status != "disabled")
+            .filter(BoundTgAccountModel.status.notin_(("disabled", "deleted")))
             .count()
         )
 
     def list_for_user(self, system_user_id: int) -> list[BoundTgAccountModel]:
         return (
             self._session.query(BoundTgAccountModel)
-            .filter_by(system_user_id=system_user_id)
+            .filter(BoundTgAccountModel.system_user_id == system_user_id)
+            .filter(BoundTgAccountModel.status != "deleted")
             .order_by(BoundTgAccountModel.id.asc())
             .all()
         )
@@ -99,6 +100,12 @@ class AccountRepository:
         self._session.flush()
         return account
 
+    def mark_deleted(self, account_id: int) -> BoundTgAccountModel:
+        account = self.get(account_id)
+        account.status = "deleted"
+        self._session.flush()
+        return account
+
     def delete(self, account_id: int) -> None:
         account = self.get(account_id)
         self._session.delete(account)
@@ -131,6 +138,11 @@ class SessionSlotRepository:
             raise LookupError(f"TgSessionSlot 不存在: {slot_id}")
         model.status = SessionStatus.FAILED.value
         model.failure_reason = reason
+        self._session.flush()
+
+    def delete_for_account(self, account_id: int) -> None:
+        for slot in self.list_for_account(account_id):
+            self._session.delete(slot)
         self._session.flush()
 
 
