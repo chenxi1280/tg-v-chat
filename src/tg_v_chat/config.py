@@ -35,4 +35,6 @@ def _require_env(name: str) -> str:
     value = os.getenv(name)
     if not value:
         raise RuntimeError(f"missing required environment variable: {name}")
+    if value.startswith("replace_with_"):
+        raise RuntimeError(f"environment variable still uses template placeholder: {name}")
     return value

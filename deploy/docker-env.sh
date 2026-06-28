@@ -64,6 +64,18 @@ ensure_runtime_env() {
     exit 1
   fi
 
+  local placeholders=()
+  for key in "${required[@]}"; do
+    if [[ "${!key}" == replace_with_* ]]; then
+      placeholders+=("$key")
+    fi
+  done
+
+  if (( ${#placeholders[@]} > 0 )); then
+    echo "Runtime env vars still use template placeholders: ${placeholders[*]}" >&2
+    exit 1
+  fi
+
   case "$TG_V_CHAT_DATABASE_URL" in
     postgresql://*|postgresql+psycopg://*) ;;
     *)
