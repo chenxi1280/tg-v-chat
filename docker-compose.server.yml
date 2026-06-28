@@ -1,0 +1,79 @@
+name: tg-v-chat
+
+x-app-env: &app-env
+  APP_ENV: ${APP_ENV:-production}
+  TZ: ${TZ:-Asia/Shanghai}
+  TG_V_CHAT_DATABASE_URL: ${TG_V_CHAT_DATABASE_URL:?TG_V_CHAT_DATABASE_URL is required}
+  TG_V_CHAT_SESSION_KEY: ${TG_V_CHAT_SESSION_KEY:?TG_V_CHAT_SESSION_KEY is required}
+  TG_V_CHAT_BOT_TOKEN: ${TG_V_CHAT_BOT_TOKEN:?TG_V_CHAT_BOT_TOKEN is required}
+  TG_V_CHAT_PRIMARY_API_ID: ${TG_V_CHAT_PRIMARY_API_ID:?TG_V_CHAT_PRIMARY_API_ID is required}
+  TG_V_CHAT_PRIMARY_API_HASH: ${TG_V_CHAT_PRIMARY_API_HASH:?TG_V_CHAT_PRIMARY_API_HASH is required}
+  TG_V_CHAT_STANDBY_1_API_ID: ${TG_V_CHAT_STANDBY_1_API_ID:?TG_V_CHAT_STANDBY_1_API_ID is required}
+  TG_V_CHAT_STANDBY_1_API_HASH: ${TG_V_CHAT_STANDBY_1_API_HASH:?TG_V_CHAT_STANDBY_1_API_HASH is required}
+  TG_V_CHAT_STANDBY_2_API_ID: ${TG_V_CHAT_STANDBY_2_API_ID:?TG_V_CHAT_STANDBY_2_API_ID is required}
+  TG_V_CHAT_STANDBY_2_API_HASH: ${TG_V_CHAT_STANDBY_2_API_HASH:?TG_V_CHAT_STANDBY_2_API_HASH is required}
+
+x-healthcheck: &app-healthcheck
+  test: ["CMD", "python", "-m", "tg_v_chat.healthcheck"]
+  interval: 20s
+  timeout: 10s
+  start_period: 30s
+  retries: 6
+
+services:
+  migrate:
+    image: ${TG_V_CHAT_IMAGE:?TG_V_CHAT_IMAGE is required}
+    container_name: tg-v-chat-migrate
+    restart: "no"
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      <<: *app-env
+    networks:
+      - infra_default
+
+  bot:
+    image: ${TG_V_CHAT_IMAGE:?TG_V_CHAT_IMAGE is required}
+    container_name: tg-v-chat-bot
+    restart: unless-stopped
+    command: ["python", "-m", "tg_v_chat.runtime", "--role", "bot"]
+    environment:
+      <<: *app-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck: *app-healthcheck
+    networks:
+      - infra_default
+
+  listener:
+    image: ${TG_V_CHAT_IMAGE:?TG_V_CHAT_IMAGE is required}
+    container_name: tg-v-chat-listener
+    restart: unless-stopped
+    command: ["python", "-m", "tg_v_chat.runtime", "--role", "listener"]
+    environment:
+      <<: *app-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck: *app-healthcheck
+    networks:
+      - infra_default
+
+  worker:
+    image: ${TG_V_CHAT_IMAGE:?TG_V_CHAT_IMAGE is required}
+    container_name: tg-v-chat-worker
+    restart: unless-stopped
+    command: ["python", "-m", "tg_v_chat.runtime", "--role", "worker"]
+    environment:
+      <<: *app-env
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck: *app-healthcheck
+    networks:
+      - infra_default
+
+networks:
+  infra_default:
+    name: ${INFRA_NETWORK_NAME:-infra_default}
+    external: true

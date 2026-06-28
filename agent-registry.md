@@ -10,6 +10,7 @@
 
 ## Thread Initialization
 
-- project_id: `/Users/xida/PycharmProjects/tg-v-caht`
+- project_id: `/Users/xida/PycharmProjects/tg-v-chat`
+- path_correction: original handoff path `/Users/xida/PycharmProjects/tg-v-caht` was a typo; actual project path is `/Users/xida/PycharmProjects/tg-v-chat`.
 - protocol_doc: `/Users/xida/codexProject/codexwork/Codex多Agent协作机制与项目落地手册.md`
 - initialized_at: `2026-06-28`
