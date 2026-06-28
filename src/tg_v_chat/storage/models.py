@@ -66,6 +66,7 @@ class AuthChallengeModel(Base):
     phone_number = Column(String(64), nullable=False)
     developer_slot = Column(String(32), nullable=False)
     phone_code_hash = Column(String(255), nullable=False)
+    pending_session = Column(Text, nullable=True)
     status = Column(String(32), nullable=False, default="code_required")
 
 

@@ -19,11 +19,13 @@ class FakeAuthenticator:
     def __init__(self, needs_password=False):
         self.needs_password = needs_password
         self.password_checked = False
+        self.code_challenge_pending_session = None
 
     def start(self, phone_number, slot):
-        return AuthChallenge(phone_number, slot, "phone_code_hash")
+        return AuthChallenge(phone_number, slot, "phone_code_hash", pending_session="pending-session")
 
     def complete_code(self, challenge, code):
+        self.code_challenge_pending_session = challenge.pending_session
         if self.needs_password:
             return AuthStep.PASSWORD_REQUIRED
         return "session-string"
@@ -100,6 +102,20 @@ def test_phone_code_and_2fa_binding_persist_encrypted_sessions(uow):
     assert account.status == "active"
     assert len(slots) == 3
     assert slots[0].encrypted_session != "session-string-2fa"
+
+
+def test_binding_preserves_pending_login_session_encrypted(uow):
+    authenticator = FakeAuthenticator()
+    cipher = SessionCipher("test-key")
+    auth = AuthService(uow, authenticator, cipher)
+
+    challenge = auth.start_binding(1, "+15550000001", DeveloperSlot.PRIMARY)
+    model = uow.auth_challenges.get(challenge.id)
+
+    assert model.pending_session != "pending-session"
+    assert cipher.decrypt(model.pending_session) == "pending-session"
+    assert auth.submit_code(challenge.id, "12345") is AuthStep.COMPLETE
+    assert authenticator.code_challenge_pending_session == "pending-session"
 
 
 def test_incoming_private_message_is_idempotent_and_album_ordered(uow):

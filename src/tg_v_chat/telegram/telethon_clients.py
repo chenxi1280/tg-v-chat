@@ -48,8 +48,8 @@ class TelethonAuthenticator:
         self._partial_sessions: dict[str, str] = {}
 
     def start(self, phone_number, slot):
-        code_hash = _run_async(self._send_code(phone_number))
-        return AuthChallenge(phone_number, slot, code_hash)
+        code_hash, pending_session = _run_async(self._send_code(phone_number))
+        return AuthChallenge(phone_number, slot, code_hash, pending_session=pending_session)
 
     def complete_code(self, challenge, code):
         return _run_async(self._sign_in_with_code(challenge, code))
@@ -62,7 +62,7 @@ class TelethonAuthenticator:
         self._partial_sessions.pop(challenge.phone_code_hash, None)
         return session
 
-    async def _send_code(self, phone_number: str) -> str:
+    async def _send_code(self, phone_number: str) -> tuple[str, str]:
         from telethon import TelegramClient
         from telethon.sessions import StringSession
 
@@ -70,7 +70,7 @@ class TelethonAuthenticator:
         await client.connect()
         try:
             sent = await client.send_code_request(phone_number)
-            return sent.phone_code_hash
+            return sent.phone_code_hash, client.session.save()
         finally:
             await client.disconnect()
 
@@ -85,7 +85,14 @@ class TelethonAuthenticator:
         )
         from telethon.sessions import StringSession
 
-        client = TelegramClient(StringSession(), self._app_config.api_id, self._app_config.api_hash)
+        if challenge.pending_session is None:
+            raise AuthFailure("当前验证码登录会话已失效，请重新开始绑定。", restart_required=True)
+
+        client = TelegramClient(
+            StringSession(challenge.pending_session),
+            self._app_config.api_id,
+            self._app_config.api_hash,
+        )
         await client.connect()
         try:
             await client.sign_in(challenge.phone_number, code, phone_code_hash=challenge.phone_code_hash)

@@ -150,12 +150,21 @@ class AuthChallengeRepository:
     def __init__(self, session):
         self._session = session
 
-    def create(self, account_id: int, phone: str, slot: DeveloperSlot, code_hash: str):
+    def create(
+        self,
+        account_id: int,
+        phone: str,
+        slot: DeveloperSlot,
+        code_hash: str,
+        *,
+        pending_session: str | None = None,
+    ):
         model = AuthChallengeModel(
             bound_tg_account_id=account_id,
             phone_number=phone,
             developer_slot=slot.value,
             phone_code_hash=code_hash,
+            pending_session=pending_session,
         )
         self._session.add(model)
         self._session.flush()
