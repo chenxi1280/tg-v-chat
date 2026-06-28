@@ -35,7 +35,7 @@ def test_private_text_event_is_converted_to_relay_message():
     assert message.peer_id == 149222
     assert message.peer_access_hash == 987654321
     assert message.sender_name is None
-    assert message.message_time is None
+    assert message.sent_at is None
     assert message.source_message_id == 36
     assert message.media_kind is MediaKind.TEXT
     assert message.payload == "11"
@@ -75,7 +75,7 @@ def test_async_private_event_reads_access_hash_from_input_sender():
     assert message.peer_access_hash == 222333444
 
 
-def test_async_private_event_reads_sender_name_and_message_time():
+def test_async_private_event_reads_sender_name_and_sent_at():
     sent_at = datetime(2026, 6, 28, 16, 12, 55, tzinfo=timezone.utc)
 
     class Event:
@@ -103,7 +103,7 @@ def test_async_private_event_reads_sender_name_and_message_time():
     message = asyncio.run(async_private_message_from_event(binding, Event()))
 
     assert message.sender_name == "洋芋 测试"
-    assert message.message_time == sent_at
+    assert message.sent_at == sent_at
 
 
 def test_push_message_display_shows_name_content_and_time_only():
@@ -127,13 +127,13 @@ def test_push_message_display_shows_name_content_and_time_only():
         **{
             **message.__dict__,
             "sender_name": "洋芋",
-            "message_time": datetime(2026, 6, 28, 16, 12, 55, tzinfo=timezone.utc),
+            "sent_at": datetime(2026, 6, 28, 16, 12, 55, tzinfo=timezone.utc),
         }
     )
 
     formatted = _format_push_message(message)
 
-    assert formatted == "发送人：洋芋\n消息：12131\n时间：2026-06-29 00:12:55"
+    assert formatted == "发送人：洋芋\n时间：2026-06-29 00:12:55\n内容：12131"
     assert "账号 ID" not in formatted
     assert "来源 ID" not in formatted
     assert "消息 ID" not in formatted

@@ -78,6 +78,8 @@ class RelayMessageModel(Base):
     bound_tg_account_id = Column(Integer, ForeignKey("bound_tg_accounts.id"), nullable=False)
     peer_id = Column(BigInteger, nullable=False)
     peer_access_hash = Column(BigInteger, nullable=True)
+    sender_name = Column(Text, nullable=True)
+    sent_at = Column(DateTime(timezone=True), nullable=True)
     source_message_id = Column(Integer, nullable=False)
     media_kind = Column(String(32), nullable=False)
     payload = Column(Text, nullable=False)

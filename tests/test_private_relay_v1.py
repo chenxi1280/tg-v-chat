@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 import pytest
 
 from tg_v_chat.crypto import SessionCipher
@@ -12,6 +14,7 @@ from tg_v_chat.domain import (
 from tg_v_chat.services.auth import AuthChallenge, AuthService, AuthStep, PasswordRequired
 from tg_v_chat.services.relay import PrivateRelayService
 from tg_v_chat.storage.database import create_session_factory, init_db
+from tg_v_chat.storage.models import RelayMessageModel
 from tg_v_chat.storage.repositories import UnitOfWork
 
 
@@ -111,6 +114,32 @@ def test_private_push_uses_telegram_user_id_and_stores_internal_owner(uow):
     assert bot.pushes[0][0] == telegram_user_id
     assert push.system_user_id == account.system_user_id
     assert mapping.system_user_id == account.system_user_id
+
+
+def test_relay_persists_display_metadata(uow):
+    sent_at = datetime(2026, 6, 28, 15, 37, 6, tzinfo=timezone.utc)
+    account = create_active_account(uow, system_user_id=7_677_366_761)
+    relay = PrivateRelayService(uow, FakeBotGateway(), FakeSenderPool())
+
+    result = relay.receive_private_message(
+        IncomingPrivateMessage(
+            account.id,
+            88,
+            102,
+            MediaKind.TEXT,
+            "12131",
+            None,
+            0,
+            sender_name="洋芋",
+            sent_at=sent_at,
+        )
+    )
+    row = uow.session.get(RelayMessageModel, result.relay_message_id)
+    pushed = uow.mappings.get_by_bot_message(result.bot_message_id)
+
+    assert row.sender_name == "洋芋"
+    assert row.sent_at.replace(tzinfo=timezone.utc) == sent_at
+    assert pushed.peer_id == 88
 
 
 def test_binding_rejects_twenty_first_account(uow):

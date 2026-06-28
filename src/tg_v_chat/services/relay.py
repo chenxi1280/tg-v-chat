@@ -189,4 +189,6 @@ def _message_from_relay(row) -> IncomingPrivateMessage:
         payload=row.payload,
         media_group_id=row.media_group_id,
         sequence=row.sequence,
+        sender_name=row.sender_name,
+        sent_at=row.sent_at,
     )

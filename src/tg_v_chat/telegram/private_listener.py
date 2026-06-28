@@ -110,7 +110,7 @@ def private_message_from_event(binding: BoundListenerSession, event) -> Incoming
 
 async def async_private_message_from_event(binding: BoundListenerSession, event) -> IncomingPrivateMessage:
     access_hash = await _peer_access_hash(event)
-    return _private_message_from_event(binding, event, access_hash, await _sender_name(event), _message_time(event))
+    return _private_message_from_event(binding, event, access_hash, await _sender_name(event), _sent_at(event))
 
 
 def _private_message_from_event(
@@ -118,7 +118,7 @@ def _private_message_from_event(
     event,
     peer_access_hash: int | None,
     sender_name: str | None,
-    message_time: datetime | None,
+    sent_at: datetime | None,
 ) -> IncomingPrivateMessage:
     message = event.message
     return IncomingPrivateMessage(
@@ -131,7 +131,7 @@ def _private_message_from_event(
         media_group_id=_media_group_id(message),
         sequence=1,
         sender_name=sender_name,
-        message_time=message_time,
+        sent_at=sent_at,
     )
 
 
@@ -197,8 +197,8 @@ def _format_push_message(message: IncomingPrivateMessage) -> str:
     return "\n".join(
         (
             f"发送人：{message.sender_name or '未知'}",
-            f"消息：{message.payload}",
-            f"时间：{_format_message_time(message.message_time)}",
+            f"时间：{_format_message_time(message.sent_at)}",
+            f"内容：{message.payload}",
         )
     )
 
@@ -240,7 +240,7 @@ async def _sender_name(event) -> str | None:
     return None
 
 
-def _message_time(event) -> datetime | None:
+def _sent_at(event) -> datetime | None:
     value = getattr(event.message, "date", None)
     return value if isinstance(value, datetime) else None
 

@@ -416,6 +416,8 @@ def _relay_values(message: IncomingPrivateMessage) -> dict:
         "bound_tg_account_id": message.bound_tg_account_id,
         "peer_id": message.peer_id,
         "peer_access_hash": message.peer_access_hash,
+        "sender_name": message.sender_name,
+        "sent_at": message.sent_at,
         "source_message_id": message.source_message_id,
         "media_kind": message.media_kind.value,
         "payload": message.payload,

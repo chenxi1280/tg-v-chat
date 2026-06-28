@@ -49,7 +49,7 @@ class IncomingPrivateMessage:
     sequence: int
     peer_access_hash: int | None = None
     sender_name: str | None = None
-    message_time: datetime | None = None
+    sent_at: datetime | None = None
 
 
 @dataclass(frozen=True)
