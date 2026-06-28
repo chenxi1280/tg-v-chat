@@ -19,7 +19,6 @@ class BotReplyHandler:
         self._relay_service_factory = relay_service_factory
 
     def handle_reply(self, command: BotReplyCommand):
-        relay_service = self._relay_service_factory()
         reply = OutgoingReply(
             system_user_id=command.system_user_id,
             bot_reply_message_id=command.bot_reply_message_id,
@@ -27,4 +26,5 @@ class BotReplyHandler:
             media_kind=command.media_kind,
             payload=command.payload,
         )
-        return relay_service.handle_bot_reply(reply)
+        with self._relay_service_factory() as relay_service:
+            return relay_service.handle_bot_reply(reply)

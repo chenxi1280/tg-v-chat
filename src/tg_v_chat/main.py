@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 
 from tg_v_chat.bot.account_management import AccountManagementService
@@ -55,9 +56,10 @@ def main() -> None:
 
 
 def _relay_factory(session_factory, bot_gateway, sender_pool):
+    @contextmanager
     def create_service() -> PrivateRelayService:
-        unit = UnitOfWork(session_factory).__enter__()
-        return PrivateRelayService(unit, bot_gateway, sender_pool)
+        with UnitOfWork(session_factory) as unit:
+            yield PrivateRelayService(unit, bot_gateway, sender_pool)
 
     return create_service
 

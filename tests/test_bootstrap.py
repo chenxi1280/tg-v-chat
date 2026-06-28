@@ -1,8 +1,9 @@
 import pytest
 
-from tg_v_chat.bot.handlers import BotReplyHandler
+from tg_v_chat.bot.handlers import BotReplyCommand, BotReplyHandler
 from tg_v_chat.bot.router import BotIncomingMessage, BotUpdateRouter
 from tg_v_chat.config import load_config
+from tg_v_chat.domain import MediaKind
 from tg_v_chat.main import build_runtime
 from tg_v_chat.runtime import run_role
 from tg_v_chat.telegram.telethon_clients import TelethonBotGateway, TelethonSenderPool, _buttons
@@ -63,6 +64,30 @@ def test_runtime_entrypoints_are_constructible():
     assert isinstance(runtime.bot_gateway, TelethonBotGateway)
     assert isinstance(runtime.sender_pool, TelethonSenderPool)
     assert isinstance(runtime.worker_runner, WorkerRunner)
+
+
+def test_bot_reply_handler_closes_relay_context_on_failure():
+    class FailingRelay:
+        def handle_bot_reply(self, _reply):
+            raise RuntimeError("boom")
+
+    class RelayContext:
+        closed = False
+
+        def __enter__(self):
+            return FailingRelay()
+
+        def __exit__(self, _exc_type, _exc, _traceback):
+            self.closed = True
+
+    context = RelayContext()
+    handler = BotReplyHandler(lambda: context)
+    command = BotReplyCommand(1, 2, 3, MediaKind.TEXT, "reply")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        handler.handle_reply(command)
+
+    assert context.closed is True
 
 
 def test_runtime_rejects_sqlite_without_test_opt_in():
