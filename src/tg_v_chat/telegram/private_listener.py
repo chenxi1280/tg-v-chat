@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Callable
+from zoneinfo import ZoneInfo
 
 from tg_v_chat.crypto import SessionCipher
 from tg_v_chat.domain import DeveloperSlot, IncomingPrivateMessage, MediaKind, SessionStatus
@@ -12,6 +14,7 @@ from tg_v_chat.telegram.telethon_clients import DeveloperAppConfig, TelethonBotG
 
 
 LISTENER_REFRESH_SECONDS = 10
+DISPLAY_TIMEZONE = ZoneInfo("Asia/Shanghai")
 
 
 @dataclass(frozen=True)
@@ -102,17 +105,20 @@ class TelethonPrivateListenerProcess:
 
 
 def private_message_from_event(binding: BoundListenerSession, event) -> IncomingPrivateMessage:
-    return _private_message_from_event(binding, event, _peer_access_hash_from_attrs(event))
+    return _private_message_from_event(binding, event, _peer_access_hash_from_attrs(event), None, None)
 
 
 async def async_private_message_from_event(binding: BoundListenerSession, event) -> IncomingPrivateMessage:
-    return _private_message_from_event(binding, event, await _peer_access_hash(event))
+    access_hash = await _peer_access_hash(event)
+    return _private_message_from_event(binding, event, access_hash, await _sender_name(event), _message_time(event))
 
 
 def _private_message_from_event(
     binding: BoundListenerSession,
     event,
     peer_access_hash: int | None,
+    sender_name: str | None,
+    message_time: datetime | None,
 ) -> IncomingPrivateMessage:
     message = event.message
     return IncomingPrivateMessage(
@@ -124,6 +130,8 @@ def _private_message_from_event(
         payload=_payload(event),
         media_group_id=_media_group_id(message),
         sequence=1,
+        sender_name=sender_name,
+        message_time=message_time,
     )
 
 
@@ -188,14 +196,9 @@ def _bot_sender(loop, bot_client) -> Callable[[int, IncomingPrivateMessage], int
 def _format_push_message(message: IncomingPrivateMessage) -> str:
     return "\n".join(
         (
-            "收到 TG 私聊消息",
-            "",
-            f"账号 ID：{message.bound_tg_account_id}",
-            f"来源 ID：{message.peer_id}",
-            f"消息 ID：{message.source_message_id}",
-            f"类型：{message.media_kind.value}",
-            "",
-            message.payload,
+            f"发送人：{message.sender_name or '未知'}",
+            f"消息：{message.payload}",
+            f"时间：{_format_message_time(message.message_time)}",
         )
     )
 
@@ -221,6 +224,40 @@ async def _peer_access_hash_from_method(event, method_name: str) -> int | None:
         return None
     peer = await method()
     return _access_hash(peer)
+
+
+async def _sender_name(event) -> str | None:
+    name = _entity_name(getattr(event, "sender", None)) or _entity_name(getattr(event, "chat", None))
+    if name:
+        return name
+    for method_name in ("get_sender", "get_chat"):
+        method = getattr(event, method_name, None)
+        if method is None:
+            continue
+        name = _entity_name(await method())
+        if name:
+            return name
+    return None
+
+
+def _message_time(event) -> datetime | None:
+    value = getattr(event.message, "date", None)
+    return value if isinstance(value, datetime) else None
+
+
+def _entity_name(entity) -> str | None:
+    if entity is None:
+        return None
+    parts = [getattr(entity, "first_name", None), getattr(entity, "last_name", None)]
+    full_name = " ".join(part for part in parts if part)
+    return full_name or getattr(entity, "title", None) or getattr(entity, "username", None)
+
+
+def _format_message_time(value: datetime | None) -> str:
+    if value is None:
+        return "未知"
+    aware = value if value.tzinfo is not None else value.replace(tzinfo=timezone.utc)
+    return aware.astimezone(DISPLAY_TIMEZONE).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _peer_access_hash_from_attrs(event) -> int | None:

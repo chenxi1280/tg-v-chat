@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from enum import Enum
 
 
@@ -47,6 +48,8 @@ class IncomingPrivateMessage:
     media_group_id: str | None
     sequence: int
     peer_access_hash: int | None = None
+    sender_name: str | None = None
+    message_time: datetime | None = None
 
 
 @dataclass(frozen=True)
