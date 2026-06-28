@@ -149,7 +149,7 @@ def test_expired_code_cancels_binding_state():
         assert account.status == "disabled"
 
 
-def test_home_cancels_abandoned_binding_state():
+def test_home_offers_relogin_for_abandoned_binding_state():
     factory = create_session_factory("sqlite:///:memory:")
     init_db(factory)
     authenticator = FakeAuthenticator()
@@ -166,13 +166,50 @@ def test_home_cancels_abandoned_binding_state():
     response = router.handle(BotIncomingMessage(146517, 12, None, "/start"))[0]
 
     assert "已绑定账号：0/20" in response.text
-    assert "需要处理：0" in response.text
+    assert "需要处理：1" in response.text
+    relogin_buttons = [button for button in response.buttons if button.text == "重新登录"]
+    assert len(relogin_buttons) == 1
     with UnitOfWork(factory) as uow:
         user = uow.users.get_by_telegram_id(146517)
         account = uow.accounts.list_for_user(user.id)[0]
         challenge = uow.auth_challenges.get(1)
-        assert account.status == "disabled"
-        assert challenge.status == "cancelled"
+        assert account.status == "binding"
+        assert challenge.status == "code_required"
+
+
+def test_relogin_restarts_abandoned_binding_with_same_phone():
+    factory = create_session_factory("sqlite:///:memory:")
+    init_db(factory)
+    authenticator = FakeAuthenticator()
+    service = AccountManagementService(factory, authenticator, SessionCipher("test-key"))
+    router = BotUpdateRouter(lambda _command: None, service)
+
+    router.handle_callback(BotCallback(146517, "account.bind.start"))
+    router.handle(BotIncomingMessage(146517, 11, None, "+15550000001"))
+    with UnitOfWork(factory) as uow:
+        user = uow.users.get_by_telegram_id(146517)
+        uow.conversation_states.clear(user.id)
+        uow.commit()
+
+    home = router.handle(BotIncomingMessage(146517, 12, None, "/start"))[0]
+    relogin = next(button for button in home.buttons if button.text == "重新登录")
+    response = router.handle_callback(BotCallback(146517, relogin.data))[0]
+
+    assert "验证码已重新发送" in response.text
+    assert authenticator.started == [
+        ("+15550000001", DeveloperSlot.PRIMARY),
+        ("+15550000001", DeveloperSlot.PRIMARY),
+    ]
+    with UnitOfWork(factory) as uow:
+        user = uow.users.get_by_telegram_id(146517)
+        old_account, new_account = uow.accounts.list_for_user(user.id)
+        state = uow.conversation_states.get(user.id)
+        assert old_account.status == "disabled"
+        assert new_account.status == "binding"
+        assert uow.auth_challenges.get(1).status == "cancelled"
+        assert uow.auth_challenges.get(2).status == "code_required"
+        assert state.state == "awaiting_code"
+        assert state.auth_challenge_id == 2
 
 
 def test_disabled_accounts_do_not_block_new_binding():

@@ -51,6 +51,8 @@ class AccountManagementService:
         }
         if data.startswith("account.detail:"):
             return self.detail(telegram_user_id, _parse_id(data))
+        if data.startswith("account.relogin:"):
+            return self.relogin(telegram_user_id, _parse_id(data))
         if data.startswith("account.disable.confirm:"):
             return self.disable_confirm(telegram_user_id, _parse_id(data))
         if data.startswith("account.disable:"):
@@ -69,7 +71,6 @@ class AccountManagementService:
     def home(self, telegram_user_id: int) -> BotResponse:
         with UnitOfWork(self._session_factory) as uow:
             user = uow.users.get_or_create(telegram_user_id)
-            _cancel_abandoned_bindings(uow, user.id)
             uow.commit()
             accounts = uow.accounts.list_for_user(user.id)
             text = _home_text(accounts)
@@ -117,6 +118,21 @@ class AccountManagementService:
             uow.accounts.mark_disabled(account_id)
             uow.commit()
         return BotResponse("账号已禁用。", buttons=_home_nav_buttons())
+
+    def relogin(self, telegram_user_id: int, account_id: int) -> BotResponse:
+        with UnitOfWork(self._session_factory) as uow:
+            user = uow.users.get_or_create(telegram_user_id)
+            account = uow.accounts.get_for_user(account_id, user.id)
+            if account.status == ACCOUNT_STATUS_ACTIVE:
+                return BotResponse("该账号当前无需重新登录。", buttons=_home_nav_buttons())
+            _cancel_account_challenges(uow, account.id)
+            uow.accounts.mark_disabled(account.id)
+            uow.conversation_states.clear(user.id)
+            auth = AuthService(uow, self._authenticator, self._cipher)
+            challenge = auth.start_binding(telegram_user_id, account.phone_number, DeveloperSlot.PRIMARY)
+            uow.conversation_states.set(user.id, STATE_AWAITING_CODE, challenge.id)
+            uow.commit()
+        return BotResponse("验证码已重新发送，请输入 Telegram 收到的验证码。", buttons=_cancel_buttons())
 
     def relay_help(self, _telegram_user_id: int) -> BotResponse:
         return BotResponse(_relay_help_text(), buttons=_home_nav_buttons())
@@ -198,13 +214,17 @@ def _home_buttons(accounts) -> tuple[ButtonSpec, ...]:
             ButtonSpec("中转说明", "account.relay_help"),
             ButtonSpec("帮助", "account.help"),
         )
-    return (
+    buttons = [
         ButtonSpec("绑定 TG 账号", "account.bind.start"),
         ButtonSpec("我的账号", "account.list"),
         ButtonSpec("授权状态", "account.status"),
         ButtonSpec("中转说明", "account.relay_help"),
         ButtonSpec("帮助", "account.help"),
-    )
+    ]
+    relogin_account = _first_relogin_account(accounts)
+    if relogin_account is not None:
+        buttons.insert(0, ButtonSpec("重新登录", f"account.relogin:{relogin_account.id}"))
+    return tuple(buttons)
 
 
 def _accounts_text(accounts) -> str:
@@ -310,10 +330,10 @@ def _require_challenge(challenge_id: int | None) -> int:
 def _auth_failure_response(uow, user_id: int, challenge_id: int | None, failure: AuthFailure) -> BotResponse:
     if not failure.restart_required:
         return BotResponse(failure.message, buttons=_cancel_buttons())
-    _cancel_challenge_by_id(uow, challenge_id)
+    account_id = _cancel_challenge_by_id(uow, challenge_id)
     uow.conversation_states.clear(user_id)
     uow.commit()
-    return BotResponse(failure.message, buttons=_home_nav_buttons())
+    return BotResponse(failure.message, buttons=_relogin_nav_buttons(account_id))
 
 
 def _cancel_abandoned_bindings(uow, user_id: int) -> None:
@@ -337,6 +357,23 @@ def _cancel_challenges(uow, challenges) -> None:
             uow.auth_challenges.mark_status(challenge.id, AUTH_STATUS_CANCELLED)
 
 
+def _cancel_account_challenges(uow, account_id: int) -> None:
+    _cancel_challenges(uow, uow.auth_challenges.list_for_account(account_id))
+
+
+def _first_relogin_account(accounts):
+    return next((account for account in accounts if account.status == ACCOUNT_STATUS_BINDING), None)
+
+
+def _relogin_nav_buttons(account_id: int | None) -> tuple[ButtonSpec, ...]:
+    if account_id is None:
+        return _home_nav_buttons()
+    return (
+        ButtonSpec("重新登录", f"account.relogin:{account_id}"),
+        ButtonSpec("返回账号管理", "account.home"),
+    )
+
+
 def _parse_id(data: str) -> int:
     try:
         return int(data.rsplit(":", 1)[1])
@@ -350,8 +387,9 @@ def _cancel_challenge_if_needed(uow, state) -> None:
     _cancel_challenge_by_id(uow, state.auth_challenge_id)
 
 
-def _cancel_challenge_by_id(uow, challenge_id: int | None) -> None:
+def _cancel_challenge_by_id(uow, challenge_id: int | None) -> int | None:
     if challenge_id is None:
-        return
+        return None
     challenge = uow.auth_challenges.mark_status(challenge_id, AUTH_STATUS_CANCELLED)
     uow.accounts.mark_disabled(challenge.bound_tg_account_id)
+    return challenge.bound_tg_account_id
