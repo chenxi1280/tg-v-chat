@@ -71,7 +71,7 @@ class TelethonPrivateListenerProcess:
             self._clients[binding.account_id] = await self._start_user_client(binding, bot_gateway)
 
     async def _start_user_client(self, binding: BoundListenerSession, bot_gateway: TelethonBotGateway):
-        from telethon import TelegramClient, events
+        from telethon import TelegramClient
         from telethon.sessions import StringSession
 
         app_config = self._app_configs[DeveloperSlot(binding.developer_slot)]
@@ -82,7 +82,7 @@ class TelethonPrivateListenerProcess:
             raise RuntimeError(f"TG 账号未授权，无法监听: {binding.phone_number}")
         client.add_event_handler(
             _incoming_handler(binding, self._session_factory, bot_gateway),
-            events.NewMessage(incoming=True),
+            private_message_event_builder(),
         )
         print(f"tg-v-chat listener connected account {binding.account_id} {binding.developer_slot}")
         return client
@@ -112,6 +112,12 @@ def private_message_from_event(binding: BoundListenerSession, event) -> Incoming
         media_group_id=_media_group_id(message),
         sequence=1,
     )
+
+
+def private_message_event_builder():
+    from telethon import events
+
+    return events.NewMessage()
 
 
 def _incoming_handler(binding: BoundListenerSession, session_factory, bot_gateway: TelethonBotGateway):

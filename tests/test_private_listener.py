@@ -1,7 +1,11 @@
 from types import SimpleNamespace
 
 from tg_v_chat.domain import MediaKind
-from tg_v_chat.telegram.private_listener import BoundListenerSession, private_message_from_event
+from tg_v_chat.telegram.private_listener import (
+    BoundListenerSession,
+    private_message_event_builder,
+    private_message_from_event,
+)
 
 
 def test_private_text_event_is_converted_to_relay_message():
@@ -27,3 +31,10 @@ def test_private_text_event_is_converted_to_relay_message():
     assert message.payload == "11"
     assert message.media_group_id is None
     assert message.sequence == 1
+
+
+def test_private_listener_subscribes_to_incoming_and_outgoing_messages():
+    builder = private_message_event_builder()
+
+    assert builder.incoming is None
+    assert builder.outgoing is None
