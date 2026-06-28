@@ -9,6 +9,26 @@ from tg_v_chat.telegram.telethon_clients import TelethonBotGateway, TelethonSend
 from tg_v_chat.workers.runner import WorkerRunner
 
 
+class FakeAccountManagement:
+    def handle_command(self, telegram_user_id, command):
+        from tg_v_chat.bot.router import BotResponse, ButtonSpec
+
+        return BotResponse(
+            f"账号管理 {telegram_user_id} {command}",
+            buttons=(ButtonSpec("绑定 TG 账号", "account.bind.start"),),
+        )
+
+    def handle_callback(self, telegram_user_id, data):
+        from tg_v_chat.bot.router import BotResponse
+
+        return BotResponse(f"callback {telegram_user_id} {data}")
+
+    def handle_text(self, telegram_user_id, text):
+        from tg_v_chat.bot.router import BotResponse
+
+        return BotResponse(f"text {telegram_user_id} {text}")
+
+
 def test_load_config_requires_secrets(monkeypatch):
     for name in ("TG_V_CHAT_DATABASE_URL", "TG_V_CHAT_SESSION_KEY", "TG_V_CHAT_BOT_TOKEN"):
         monkeypatch.delenv(name, raising=False)
@@ -51,33 +71,31 @@ def test_runtime_rejects_sqlite_without_test_opt_in():
 
 
 def test_bot_router_replies_to_start_and_admin_commands():
-    replies = []
     router = BotUpdateRouter(
         lambda _command: None,
-        replies.append,
+        FakeAccountManagement(),
     )
 
-    router.handle(BotIncomingMessage(146517, 10, None, "/start"))
-    router.handle(BotIncomingMessage(146517, 11, None, "/admin"))
+    start = router.handle(BotIncomingMessage(146517, 10, None, "/start"))
+    admin = router.handle(BotIncomingMessage(146517, 11, None, "/admin"))
 
-    assert replies == [
-        (10, "机器人在线。请直接回复 Bot 推送的私聊消息进行代发。"),
-        (11, "机器人在线。当前未启用独立管理面板；绑定与中转失败会直接返回明确错误。"),
-    ]
+    assert start[0].text == "账号管理 146517 /start"
+    assert start[0].reply_to_message_id == 10
+    assert [button.text for button in start[0].buttons] == ["绑定 TG 账号"]
+    assert admin[0].text == "账号管理 146517 /admin"
 
 
 def test_bot_router_handles_replies_through_handler():
     commands = []
-    replies = []
-    router = BotUpdateRouter(commands.append, replies.append)
+    router = BotUpdateRouter(commands.append, FakeAccountManagement())
 
-    router.handle(BotIncomingMessage(146517, 12, 500, "收到"))
+    responses = router.handle(BotIncomingMessage(146517, 12, 500, "收到"))
 
     assert commands[0].system_user_id == 146517
     assert commands[0].bot_reply_message_id == 12
     assert commands[0].reply_to_message_id == 500
     assert commands[0].payload == "收到"
-    assert replies == []
+    assert responses == []
 
 
 def test_bot_role_runs_bot_process_instead_of_idle_wait():

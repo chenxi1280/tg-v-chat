@@ -3,6 +3,7 @@ from __future__ import annotations
 from tg_v_chat.domain import DeveloperSlot, IncomingPrivateMessage, SessionStatus
 from tg_v_chat.storage.models import (
     AuthChallengeModel,
+    BotConversationStateModel,
     BotPushMessageModel,
     BoundTgAccountModel,
     OutgoingReplyModel,
@@ -33,6 +34,12 @@ class UserRepository:
             raise LookupError(f"SystemUser 不存在: {user_id}")
         return user
 
+    def get_by_telegram_id(self, telegram_user_id: int) -> SystemUserModel:
+        user = self._session.query(SystemUserModel).filter_by(telegram_user_id=telegram_user_id).one_or_none()
+        if not user:
+            raise LookupError(f"SystemUser 不存在: {telegram_user_id}")
+        return user
+
 
 class AccountRepository:
     def __init__(self, session):
@@ -40,6 +47,14 @@ class AccountRepository:
 
     def count_for_user(self, system_user_id: int) -> int:
         return self._session.query(BoundTgAccountModel).filter_by(system_user_id=system_user_id).count()
+
+    def list_for_user(self, system_user_id: int) -> list[BoundTgAccountModel]:
+        return (
+            self._session.query(BoundTgAccountModel)
+            .filter_by(system_user_id=system_user_id)
+            .order_by(BoundTgAccountModel.id.asc())
+            .all()
+        )
 
     def create(self, system_user_id: int, phone_number: str) -> BoundTgAccountModel:
         account = BoundTgAccountModel(system_user_id=system_user_id, phone_number=phone_number)
@@ -53,9 +68,21 @@ class AccountRepository:
             raise LookupError(f"BoundTgAccount 不存在: {account_id}")
         return account
 
+    def get_for_user(self, account_id: int, system_user_id: int) -> BoundTgAccountModel:
+        account = self._session.get(BoundTgAccountModel, account_id)
+        if not account or account.system_user_id != system_user_id:
+            raise LookupError(f"BoundTgAccount 不存在: {account_id}")
+        return account
+
     def mark_active(self, account_id: int) -> BoundTgAccountModel:
         account = self.get(account_id)
         account.status = "active"
+        self._session.flush()
+        return account
+
+    def mark_disabled(self, account_id: int) -> BoundTgAccountModel:
+        account = self.get(account_id)
+        account.status = "disabled"
         self._session.flush()
         return account
 
@@ -109,6 +136,42 @@ class AuthChallengeRepository:
         if not challenge:
             raise LookupError(f"AuthChallenge 不存在: {challenge_id}")
         return challenge
+
+    def mark_status(self, challenge_id: int, status: str) -> AuthChallengeModel:
+        challenge = self.get(challenge_id)
+        challenge.status = status
+        self._session.flush()
+        return challenge
+
+
+class ConversationStateRepository:
+    def __init__(self, session):
+        self._session = session
+
+    def get(self, system_user_id: int) -> BotConversationStateModel | None:
+        return self._session.query(BotConversationStateModel).filter_by(system_user_id=system_user_id).one_or_none()
+
+    def set(self, system_user_id: int, state: str, challenge_id: int | None = None) -> BotConversationStateModel:
+        existing = self.get(system_user_id)
+        if existing:
+            existing.state = state
+            existing.auth_challenge_id = challenge_id
+            self._session.flush()
+            return existing
+        model = BotConversationStateModel(
+            system_user_id=system_user_id,
+            state=state,
+            auth_challenge_id=challenge_id,
+        )
+        self._session.add(model)
+        self._session.flush()
+        return model
+
+    def clear(self, system_user_id: int) -> None:
+        existing = self.get(system_user_id)
+        if existing:
+            self._session.delete(existing)
+            self._session.flush()
 
 
 class RelayRepository:
@@ -252,6 +315,7 @@ class UnitOfWork:
         self.accounts = AccountRepository(self.session)
         self.sessions = SessionSlotRepository(self.session)
         self.auth_challenges = AuthChallengeRepository(self.session)
+        self.conversation_states = ConversationStateRepository(self.session)
         self.relays = RelayRepository(self.session)
         self.pushes = PushRepository(self.session)
         self.mappings = MappingRepository(self.session)

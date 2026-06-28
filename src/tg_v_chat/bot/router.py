@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Protocol
 
 from tg_v_chat.bot.handlers import BotReplyCommand
 from tg_v_chat.domain import MediaKind
 
-START_REPLY = "机器人在线。请直接回复 Bot 推送的私聊消息进行代发。"
-ADMIN_REPLY = "机器人在线。当前未启用独立管理面板；绑定与中转失败会直接返回明确错误。"
 REPLY_REQUIRED = "请使用 Telegram 的回复功能，回复 Bot 推送的原消息后再发送。"
 
 
@@ -20,39 +19,81 @@ class BotIncomingMessage:
     media_kind: MediaKind = MediaKind.TEXT
 
 
+@dataclass(frozen=True)
+class BotCallback:
+    system_user_id: int
+    data: str
+
+
+@dataclass(frozen=True)
+class ButtonSpec:
+    text: str
+    data: str
+
+
+@dataclass(frozen=True)
+class BotResponse:
+    text: str
+    reply_to_message_id: int | None = None
+    buttons: tuple[ButtonSpec, ...] = ()
+    edit_message: bool = False
+
+
+class AccountManagement(Protocol):
+    def handle_command(self, telegram_user_id: int, command: str) -> BotResponse:
+        raise NotImplementedError
+
+    def handle_callback(self, telegram_user_id: int, data: str) -> BotResponse:
+        raise NotImplementedError
+
+    def handle_text(self, telegram_user_id: int, text: str) -> BotResponse:
+        raise NotImplementedError
+
+
 class BotUpdateRouter:
     def __init__(
         self,
         handle_reply: Callable[[BotReplyCommand], object],
-        reply: Callable[[tuple[int, str]], None],
+        account_management: AccountManagement,
     ):
         self._handle_reply = handle_reply
-        self._reply = reply
+        self._account_management = account_management
 
-    def handle(self, message: BotIncomingMessage) -> None:
-        command_reply = _command_reply(message.text)
-        if command_reply:
-            self._reply((message.message_id, command_reply))
-            return
+    def handle(self, message: BotIncomingMessage) -> list[BotResponse]:
+        command = _command(message.text)
+        if command:
+            return [self._command_response(message, command)]
         if message.reply_to_message_id is None:
-            self._reply((message.message_id, REPLY_REQUIRED))
-            return
-        self._handle_bot_reply(message)
+            return [self._text_response(message)]
+        return self._handle_bot_reply(message)
 
-    def _handle_bot_reply(self, message: BotIncomingMessage) -> None:
+    def handle_callback(self, callback: BotCallback) -> list[BotResponse]:
+        response = self._account_management.handle_callback(callback.system_user_id, callback.data)
+        return [BotResponse(response.text, response.reply_to_message_id, response.buttons, edit_message=True)]
+
+    def _command_response(self, message: BotIncomingMessage, command: str) -> BotResponse:
+        response = self._account_management.handle_command(message.system_user_id, command)
+        return _with_reply_to(response, message.message_id)
+
+    def _text_response(self, message: BotIncomingMessage) -> BotResponse:
+        response = self._account_management.handle_text(message.system_user_id, message.text)
+        return _with_reply_to(response, message.message_id)
+
+    def _handle_bot_reply(self, message: BotIncomingMessage) -> list[BotResponse]:
         try:
             self._handle_reply(_reply_command(message))
+            return []
         except Exception as exc:
-            self._reply((message.message_id, f"处理失败：{exc}"))
+            return [BotResponse(f"处理失败：{exc}", reply_to_message_id=message.message_id)]
 
 
-def _command_reply(text: str) -> str | None:
+def _command(text: str) -> str | None:
     normalized = text.strip().split(maxsplit=1)[0].lower() if text.strip() else ""
-    if normalized == "/start":
-        return START_REPLY
-    if normalized == "/admin":
-        return ADMIN_REPLY
-    return None
+    return normalized if normalized in {"/start", "/admin", "/accounts", "/bind"} else None
+
+
+def _with_reply_to(response: BotResponse, message_id: int) -> BotResponse:
+    return BotResponse(response.text, message_id, response.buttons, response.edit_message)
 
 
 def _reply_command(message: BotIncomingMessage) -> BotReplyCommand:

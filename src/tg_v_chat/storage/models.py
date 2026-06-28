@@ -22,6 +22,18 @@ class SystemUserModel(Base):
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
 
 
+class BotConversationStateModel(Base):
+    __tablename__ = "bot_conversation_states"
+
+    id = Column(Integer, primary_key=True)
+    system_user_id = Column(Integer, ForeignKey("system_users.id"), unique=True, nullable=False)
+    state = Column(String(64), nullable=False)
+    auth_challenge_id = Column(Integer, ForeignKey("auth_challenges.id"), nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+    user = relationship("SystemUserModel")
+
+
 class BoundTgAccountModel(Base):
     __tablename__ = "bound_tg_accounts"
 

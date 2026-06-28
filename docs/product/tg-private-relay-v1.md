@@ -85,6 +85,7 @@
 | DeveloperAppSlot | primary, standby_1, standby_2 | 全局三套 Telegram developer app 配置。 |
 | BoundTgAccount | binding, active, degraded, reauth_required, disabled | 用户绑定的 Telegram 个人账号。 |
 | TgSessionSlot | active, standby, failed, expired, revoked | 每个绑定账号在某个 DeveloperAppSlot 下的 session。 |
+| BotConversationState | awaiting_phone, awaiting_code, awaiting_password | Bot 内账号绑定向导的用户级状态。 |
 | PrivateChatPeer | known, blocked, unavailable | 原私聊对象。 |
 | RelayMessage | received, pushed, reply_pending, sent, failed | 私聊中转消息。 |
 | BotPushMessage | pushed, failed | Bot 推送给 SystemUser 的消息。 |
@@ -218,3 +219,20 @@
 - server_compose_pattern: follow `tg-yunying/docker-compose.server.yml` with service attached to `infra_default`
 - migration_requirement: Alembic or equivalent explicit migration workflow must exist before release gate can pass
 - release_gate_status: blocked until PostgreSQL CI, Docker/GHCR image build, server compose, migration workflow, worker runtime, env wiring, and E4 verification route exist
+
+## Product Decision: Account Management Bot Flow
+
+- decision_message_id: product-resync-account-management-bot-flow-v1
+- decision_status: complete
+- source_request: 用户指出当前 `/start` 只回复在线状态的逻辑错误；`/start` 应进入“账号管理”，并通过按钮引导绑定要管理的 TG 账号。
+- linked_prd: `docs/product/account-management-bot-flow-v1.md`
+- product_decision:
+  - `/start` 和 `/admin` 的第一响应必须是“账号管理”首页。
+  - Bot 必须使用 inline keyboard 引导绑定、账号列表、授权状态、中转说明和帮助。
+  - 绑定流程必须按手机号、验证码、可选 2FA 分步推进，每一步可取消或返回首页。
+  - 账号列表和账号详情必须展示 session 状态，并提供重新授权、补充备用授权、禁用账号等动作。
+  - 所有授权失败和状态异常必须显式展示，不允许假成功或静默降级。
+- affected_api_or_worker_flows: bot command routing, callback query routing, auth flow, account list/detail rendering, session status display
+- dataflow_index_update: updated
+- project_structure_index_update: updated
+- product_index_update: updated

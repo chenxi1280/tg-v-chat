@@ -11,6 +11,7 @@ This file is the product-side index for requirements, business objects, permissi
 | req-tg-private-relay-v1 | user | 支持用户通过 TG Bot 绑定最多 20 个 Telegram 个人账号，并中转私聊文字、emoji、图片、sticker；所有绑定账号共享三套 developer app，每账号维护 primary/standby_1/standby_2 session 并自动 failover。原 handoff 路径 `/Users/xida/PycharmProjects/tg-v-caht` 是 typo，实际项目目录为 `/Users/xida/PycharmProjects/tg-v-chat`。 | product_accepted_e3_release_blocked_until_actions | docs/product/tg-private-relay-v1.md; docs/product/product-acceptance-tg-private-relay-v1.md; docs/product/release-gate-tg-private-relay-v1-blocked-1.md; docs/product/release-gate-recheck-tg-private-relay-v1-pgsql-1.md |
 | req-tg-private-relay-v1-scaffold | dev-blocked-tg-private-relay-v1 | 当前仓库只有协作文档，没有应用源码；product 授权 dev 在真实目录 `/Users/xida/PycharmProjects/tg-v-chat` 从零初始化真实应用脚手架，推荐 Python 3.11+、Telethon、SQLAlchemy/Alembic、pytest、环境变量注入密钥。 | resync_ready | docs/product/tg-private-relay-v1.md |
 | req-tg-private-relay-v1-pgsql-release | user | 数据库明确使用 PostgreSQL；部署参考 `tg-yunying`，通过 GitHub Actions 从 `release` 分支发布，运行时数据库使用 infra-compose 中的 PostgreSQL。dev 已补齐 PostgreSQL、Alembic、GitHub Actions、Docker/compose/env 的文件级 release engineering；release gate 仍等待真实 release actions 和 E4 生产证据。 | release_engineering_ready_actions_pending | docs/product/deploy-postgres-release-plan.md; docs/product/release-gate-tg-private-relay-v1-blocked-1.md; docs/product/release-gate-recheck-tg-private-relay-v1-pgsql-1.md |
+| req-account-management-bot-flow-v1 | user | `/start` 和 `/admin` 必须进入“账号管理”首页，并通过按钮引导绑定 TG 账号、查看账号、查看授权状态、中转说明和帮助；绑定按手机号、验证码、可选 2FA 分步完成。 | code_complete_e3_passed_release_pending | docs/product/account-management-bot-flow-v1.md; docs/product/tg-private-relay-v1.md |
 
 ## Business Objects
 
@@ -26,6 +27,9 @@ This file is the product-side index for requirements, business objects, permissi
 | SessionFailoverEvent | switched, exhausted | 系统内部记录 | none | session selector, ops evidence | 自动切换证据。 |
 | ApplicationScaffold | initialized, blocked | dev 可初始化真实应用；不得创建 mock success | repo | main, bot handlers, listeners, workers, repositories, tests | Python/Telethon 优先；无现有源码可兼容。 |
 | ReleaseDeployment | blocked, engineering_ready, actions_pending, deployed | 仅 owner/ops 可提供生产密钥和发布目标 | GitHub Actions, server compose | release branch workflow, GHCR image, infra-compose PostgreSQL | 按 `tg-yunying` 模式；数据库必须是 PostgreSQL；当前文件级 release engineering ready，真实 release run/deploy/E4 pending。 |
+| AccountManagementHome | empty, normal, attention_required | SystemUser 只能看到自己的账号摘要 | TG Bot account management home | bot command router, callback router, account summary query | `/start`、`/admin`、`/accounts` 的首屏。 |
+| BotConversationState | home, awaiting_phone, awaiting_code, awaiting_password, account_detail | 归属 SystemUser；只能驱动自己的绑定流程 | TG Bot binding wizard | bot state resolver, auth flow | 每个 SystemUser 同时只能有一个主动绑定向导。 |
+| AuthChallenge | code_required, password_required, complete, cancelled, expired | 归属 SystemUser 的 BoundTgAccount | TG Bot binding wizard | auth service, Telegram authenticator | 手机号、验证码、2FA 分步授权状态。 |
 
 ## Acceptance Contracts
 
@@ -33,3 +37,4 @@ This file is the product-side index for requirements, business objects, permissi
 | --- | --- | --- | --- | --- |
 | accept-tg-private-relay-v1 | L2 | E3 before release, E4 after release | true | true |
 | product-accept-tg-private-relay-v1 | L2 | E3 product acceptance passed; release engineering files ready; E4 unproven | qa_pass accepted | blocked_until_release_actions |
+| accept-account-management-bot-flow-v1 | L2 | E3 before release, E4 after release | true | true |

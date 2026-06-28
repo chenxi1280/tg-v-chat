@@ -2,9 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from tg_v_chat.bot.account_management import AccountManagementService
 from tg_v_chat.bot.handlers import BotReplyHandler
+from tg_v_chat.bot.router import BotUpdateRouter
 from tg_v_chat.config import load_config
 from tg_v_chat.crypto import SessionCipher
+from tg_v_chat.services.auth import TelegramAuthenticator
 from tg_v_chat.services.relay import PrivateRelayService
 from tg_v_chat.storage.database import create_session_factory, require_postgresql_url
 from tg_v_chat.storage.repositories import UnitOfWork
@@ -18,6 +21,12 @@ class Runtime:
     bot_gateway: TelethonBotGateway
     sender_pool: TelethonSenderPool
     worker_runner: WorkerRunner
+    session_factory: object
+    session_cipher: SessionCipher
+
+    def bot_router(self, authenticator: TelegramAuthenticator) -> BotUpdateRouter:
+        account_management = AccountManagementService(self.session_factory, authenticator, self.session_cipher)
+        return BotUpdateRouter(self.bot_handler.handle_reply, account_management)
 
 
 def build_runtime(
@@ -31,12 +40,12 @@ def build_runtime(
         raise RuntimeError("bot token is required")
     if not allow_sqlite_for_tests:
         require_postgresql_url(database_url)
-    SessionCipher(session_key)
+    cipher = SessionCipher(session_key)
     session_factory = create_session_factory(database_url)
     bot_gateway = TelethonBotGateway()
     sender_pool = TelethonSenderPool()
     handler = BotReplyHandler(_relay_factory(session_factory, bot_gateway, sender_pool))
-    return Runtime(handler, bot_gateway, sender_pool, WorkerRunner())
+    return Runtime(handler, bot_gateway, sender_pool, WorkerRunner(), session_factory, cipher)
 
 
 def main() -> None:

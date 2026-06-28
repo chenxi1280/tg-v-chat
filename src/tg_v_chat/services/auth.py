@@ -58,6 +58,7 @@ class AuthService:
             model.status = AuthStep.PASSWORD_REQUIRED.value
             self._uow.commit()
             return AuthStep.PASSWORD_REQUIRED
+        model.status = AuthStep.COMPLETE.value
         self._activate_account(model.bound_tg_account_id, DeveloperSlot(model.developer_slot), str(result))
         return AuthStep.COMPLETE
 
@@ -65,6 +66,7 @@ class AuthService:
         model = self._uow.auth_challenges.get(challenge_id)
         challenge = _challenge_from_model(model)
         session_value = self._authenticator.complete_password(challenge, password)
+        model.status = AuthStep.COMPLETE.value
         return self._activate_account(model.bound_tg_account_id, DeveloperSlot(model.developer_slot), session_value)
 
     def _activate_account(self, account_id: int, active_slot: DeveloperSlot, session_value: str):

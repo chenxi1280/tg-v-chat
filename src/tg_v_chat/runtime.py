@@ -6,7 +6,7 @@ import time
 
 from tg_v_chat.config import load_config
 from tg_v_chat.main import build_runtime
-from tg_v_chat.telegram.telethon_clients import DeveloperAppConfig, TelethonBotProcess
+from tg_v_chat.telegram.telethon_clients import DeveloperAppConfig, TelethonAuthenticator, TelethonBotProcess
 
 
 VALID_ROLES = {"bot", "listener", "worker"}
@@ -24,7 +24,8 @@ def main() -> None:
     args = parse_args()
     config = load_config()
     runtime = build_runtime(config.database_url, config.session_encryption_key, config.bot_token)
-    bot_process = TelethonBotProcess(_primary_app_config(config), config.bot_token, runtime.bot_handler.handle_reply)
+    app_config = _primary_app_config(config)
+    bot_process = TelethonBotProcess(app_config, config.bot_token, runtime.bot_router(TelethonAuthenticator(app_config)))
     run_role(args.role, bot_runner=bot_process.run)
 
 
