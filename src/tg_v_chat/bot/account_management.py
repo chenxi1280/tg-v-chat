@@ -5,7 +5,7 @@ import re
 from tg_v_chat.bot.router import BotResponse, ButtonSpec
 from tg_v_chat.crypto import SessionCipher
 from tg_v_chat.domain import DeveloperSlot, MAX_BOUND_ACCOUNTS
-from tg_v_chat.services.auth import AuthService, AuthStep, TelegramAuthenticator
+from tg_v_chat.services.auth import AuthFailure, AuthService, AuthStep, TelegramAuthenticator
 from tg_v_chat.storage.repositories import UnitOfWork
 
 
@@ -147,7 +147,10 @@ class AccountManagementService:
 
     def _submit_code(self, uow, user_id: int, challenge_id: int | None, code: str) -> BotResponse:
         auth = AuthService(uow, self._authenticator, self._cipher)
-        step = auth.submit_code(_require_challenge(challenge_id), code)
+        try:
+            step = auth.submit_code(_require_challenge(challenge_id), code)
+        except AuthFailure as exc:
+            return _auth_failure_response(uow, user_id, challenge_id, exc)
         if step is AuthStep.PASSWORD_REQUIRED:
             uow.conversation_states.set(user_id, STATE_AWAITING_PASSWORD, challenge_id)
             uow.commit()
@@ -158,7 +161,10 @@ class AccountManagementService:
 
     def _submit_password(self, uow, user_id: int, challenge_id: int | None, password: str) -> BotResponse:
         auth = AuthService(uow, self._authenticator, self._cipher)
-        auth.submit_password(_require_challenge(challenge_id), password)
+        try:
+            auth.submit_password(_require_challenge(challenge_id), password)
+        except AuthFailure as exc:
+            return _auth_failure_response(uow, user_id, challenge_id, exc)
         uow.conversation_states.clear(user_id)
         uow.commit()
         return BotResponse("绑定成功。", buttons=_home_nav_buttons())
@@ -295,6 +301,15 @@ def _require_challenge(challenge_id: int | None) -> int:
     return challenge_id
 
 
+def _auth_failure_response(uow, user_id: int, challenge_id: int | None, failure: AuthFailure) -> BotResponse:
+    if not failure.restart_required:
+        return BotResponse(failure.message, buttons=_cancel_buttons())
+    _cancel_challenge_by_id(uow, challenge_id)
+    uow.conversation_states.clear(user_id)
+    uow.commit()
+    return BotResponse(failure.message, buttons=_home_nav_buttons())
+
+
 def _parse_id(data: str) -> int:
     try:
         return int(data.rsplit(":", 1)[1])
@@ -305,5 +320,11 @@ def _parse_id(data: str) -> int:
 def _cancel_challenge_if_needed(uow, state) -> None:
     if state is None or state.auth_challenge_id is None:
         return
-    challenge = uow.auth_challenges.mark_status(state.auth_challenge_id, "cancelled")
+    _cancel_challenge_by_id(uow, state.auth_challenge_id)
+
+
+def _cancel_challenge_by_id(uow, challenge_id: int | None) -> None:
+    if challenge_id is None:
+        return
+    challenge = uow.auth_challenges.mark_status(challenge_id, "cancelled")
     uow.accounts.mark_disabled(challenge.bound_tg_account_id)

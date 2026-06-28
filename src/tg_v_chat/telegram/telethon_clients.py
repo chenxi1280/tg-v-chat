@@ -5,7 +5,7 @@ from typing import Callable
 
 from tg_v_chat.bot.router import BotCallback, BotIncomingMessage, BotResponse, BotUpdateRouter
 from tg_v_chat.domain import IncomingPrivateMessage, OutgoingReply, SessionFailure, SessionSlotRef
-from tg_v_chat.services.auth import AuthChallenge, AuthStep
+from tg_v_chat.services.auth import AuthChallenge, AuthFailure, AuthStep
 
 
 @dataclass(frozen=True)
@@ -57,7 +57,7 @@ class TelethonAuthenticator:
     def complete_password(self, challenge, password):
         partial_session = self._partial_sessions.get(challenge.phone_code_hash)
         if partial_session is None:
-            raise RuntimeError("当前 2FA 登录会话已失效，请重新开始绑定。")
+            raise AuthFailure("当前 2FA 登录会话已失效，请重新开始绑定。", restart_required=True)
         session = _run_async(self._sign_in_with_password(partial_session, password))
         self._partial_sessions.pop(challenge.phone_code_hash, None)
         return session
@@ -76,7 +76,13 @@ class TelethonAuthenticator:
 
     async def _sign_in_with_code(self, challenge: AuthChallenge, code: str):
         from telethon import TelegramClient
-        from telethon.errors import SessionPasswordNeededError
+        from telethon.errors import (
+            PhoneCodeEmptyError,
+            PhoneCodeExpiredError,
+            PhoneCodeHashEmptyError,
+            PhoneCodeInvalidError,
+            SessionPasswordNeededError,
+        )
         from telethon.sessions import StringSession
 
         client = TelegramClient(StringSession(), self._app_config.api_id, self._app_config.api_hash)
@@ -87,11 +93,16 @@ class TelethonAuthenticator:
         except SessionPasswordNeededError:
             self._partial_sessions[challenge.phone_code_hash] = client.session.save()
             return AuthStep.PASSWORD_REQUIRED
+        except (PhoneCodeExpiredError, PhoneCodeHashEmptyError) as exc:
+            raise AuthFailure("验证码已过期，请重新开始绑定。", restart_required=True) from exc
+        except (PhoneCodeEmptyError, PhoneCodeInvalidError) as exc:
+            raise AuthFailure("验证码不正确，请检查后重新输入。") from exc
         finally:
             await client.disconnect()
 
     async def _sign_in_with_password(self, partial_session: str, password: str) -> str:
         from telethon import TelegramClient
+        from telethon.errors import PasswordHashInvalidError
         from telethon.sessions import StringSession
 
         client = TelegramClient(StringSession(partial_session), self._app_config.api_id, self._app_config.api_hash)
@@ -99,6 +110,8 @@ class TelethonAuthenticator:
         try:
             await client.sign_in(password=password)
             return client.session.save()
+        except PasswordHashInvalidError as exc:
+            raise AuthFailure("二次密码不正确，请重新输入。") from exc
         finally:
             await client.disconnect()
 

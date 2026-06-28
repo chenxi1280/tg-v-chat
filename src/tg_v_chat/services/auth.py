@@ -14,6 +14,13 @@ class AuthStep(str, Enum):
     COMPLETE = "complete"
 
 
+class AuthFailure(RuntimeError):
+    def __init__(self, message: str, *, restart_required: bool = False):
+        super().__init__(message)
+        self.message = message
+        self.restart_required = restart_required
+
+
 @dataclass(frozen=True)
 class AuthChallenge:
     phone_number: str

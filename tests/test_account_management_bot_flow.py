@@ -5,15 +5,17 @@ from tg_v_chat.bot.account_management import AccountManagementService
 from tg_v_chat.bot.router import BotCallback, BotIncomingMessage, BotUpdateRouter
 from tg_v_chat.crypto import SessionCipher
 from tg_v_chat.domain import DeveloperSlot
-from tg_v_chat.services.auth import AuthChallenge, AuthStep
+from tg_v_chat.services.auth import AuthChallenge, AuthFailure, AuthStep
 from tg_v_chat.storage.database import create_session_factory, init_db
 from tg_v_chat.storage.models import RelayMessageModel, ReplyMappingModel, SystemUserModel
 from tg_v_chat.storage.repositories import UnitOfWork
 
 
 class FakeAuthenticator:
-    def __init__(self, *, needs_password=False):
+    def __init__(self, *, needs_password=False, code_failure=None, password_failure=None):
         self.needs_password = needs_password
+        self.code_failure = code_failure
+        self.password_failure = password_failure
         self.started = []
         self.passwords = []
 
@@ -22,11 +24,15 @@ class FakeAuthenticator:
         return AuthChallenge(phone_number, slot, "phone-code-hash")
 
     def complete_code(self, challenge, code):
+        if self.code_failure is not None:
+            raise self.code_failure
         if self.needs_password:
             return AuthStep.PASSWORD_REQUIRED
         return "session-string"
 
     def complete_password(self, challenge, password):
+        if self.password_failure is not None:
+            raise self.password_failure
         self.passwords.append(password)
         return "session-string-2fa"
 
@@ -102,6 +108,65 @@ def test_code_and_password_complete_binding():
         account = uow.accounts.list_for_user(user.id)[0]
         assert account.status == "active"
         assert len(uow.sessions.list_for_account(account.id)) == 3
+
+
+def test_invalid_code_keeps_code_state():
+    factory = create_session_factory("sqlite:///:memory:")
+    init_db(factory)
+    failure = AuthFailure("验证码不正确，请检查后重新输入。")
+    authenticator = FakeAuthenticator(code_failure=failure)
+    service = AccountManagementService(factory, authenticator, SessionCipher("test-key"))
+    router = BotUpdateRouter(lambda _command: None, service)
+
+    router.handle_callback(BotCallback(146517, "account.bind.start"))
+    router.handle(BotIncomingMessage(146517, 11, None, "+15550000001"))
+    response = router.handle(BotIncomingMessage(146517, 12, None, "12345"))[0]
+
+    assert "验证码不正确" in response.text
+    with UnitOfWork(factory) as uow:
+        user = uow.users.get_by_telegram_id(146517)
+        state = uow.conversation_states.get(user.id)
+        assert state.state == "awaiting_code"
+
+
+def test_expired_code_cancels_binding_state():
+    factory = create_session_factory("sqlite:///:memory:")
+    init_db(factory)
+    failure = AuthFailure("验证码已过期，请重新开始绑定。", restart_required=True)
+    authenticator = FakeAuthenticator(code_failure=failure)
+    service = AccountManagementService(factory, authenticator, SessionCipher("test-key"))
+    router = BotUpdateRouter(lambda _command: None, service)
+
+    router.handle_callback(BotCallback(146517, "account.bind.start"))
+    router.handle(BotIncomingMessage(146517, 11, None, "+15550000001"))
+    response = router.handle(BotIncomingMessage(146517, 12, None, "12345"))[0]
+
+    assert "验证码已过期" in response.text
+    with UnitOfWork(factory) as uow:
+        user = uow.users.get_by_telegram_id(146517)
+        assert uow.conversation_states.get(user.id) is None
+        account = uow.accounts.list_for_user(user.id)[0]
+        assert account.status == "disabled"
+
+
+def test_wrong_password_keeps_password_state():
+    factory = create_session_factory("sqlite:///:memory:")
+    init_db(factory)
+    failure = AuthFailure("二次密码不正确，请重新输入。")
+    authenticator = FakeAuthenticator(needs_password=True, password_failure=failure)
+    service = AccountManagementService(factory, authenticator, SessionCipher("test-key"))
+    router = BotUpdateRouter(lambda _command: None, service)
+
+    router.handle_callback(BotCallback(146517, "account.bind.start"))
+    router.handle(BotIncomingMessage(146517, 11, None, "+15550000001"))
+    router.handle(BotIncomingMessage(146517, 12, None, "12345"))
+    response = router.handle(BotIncomingMessage(146517, 13, None, "wrong"))[0]
+
+    assert "二次密码不正确" in response.text
+    with UnitOfWork(factory) as uow:
+        user = uow.users.get_by_telegram_id(146517)
+        state = uow.conversation_states.get(user.id)
+        assert state.state == "awaiting_password"
 
 
 def test_accounts_list_masks_phone_number(bot_parts):
