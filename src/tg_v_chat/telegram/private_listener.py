@@ -102,11 +102,23 @@ class TelethonPrivateListenerProcess:
 
 
 def private_message_from_event(binding: BoundListenerSession, event) -> IncomingPrivateMessage:
+    return _private_message_from_event(binding, event, _peer_access_hash_from_attrs(event))
+
+
+async def async_private_message_from_event(binding: BoundListenerSession, event) -> IncomingPrivateMessage:
+    return _private_message_from_event(binding, event, await _peer_access_hash(event))
+
+
+def _private_message_from_event(
+    binding: BoundListenerSession,
+    event,
+    peer_access_hash: int | None,
+) -> IncomingPrivateMessage:
     message = event.message
     return IncomingPrivateMessage(
         bound_tg_account_id=binding.account_id,
         peer_id=_peer_id(event),
-        peer_access_hash=_peer_access_hash(event),
+        peer_access_hash=peer_access_hash,
         source_message_id=message.id,
         media_kind=_media_kind(message),
         payload=_payload(event),
@@ -125,7 +137,7 @@ def _incoming_handler(binding: BoundListenerSession, session_factory, bot_gatewa
     async def handle(event) -> None:
         if not getattr(event, "is_private", False):
             return
-        message = private_message_from_event(binding, event)
+        message = await async_private_message_from_event(binding, event)
         await asyncio.to_thread(_receive_message, session_factory, bot_gateway, message)
 
     return handle
@@ -192,8 +204,31 @@ def _peer_id(event) -> int:
     return int(getattr(event, "chat_id", None) or event.sender_id)
 
 
-def _peer_access_hash(event) -> int | None:
+async def _peer_access_hash(event) -> int | None:
+    access_hash = _peer_access_hash_from_attrs(event)
+    if access_hash is not None:
+        return access_hash
+    for method_name in ("get_input_chat", "get_input_sender", "get_chat", "get_sender"):
+        access_hash = await _peer_access_hash_from_method(event, method_name)
+        if access_hash is not None:
+            return access_hash
+    return None
+
+
+async def _peer_access_hash_from_method(event, method_name: str) -> int | None:
+    method = getattr(event, method_name, None)
+    if method is None:
+        return None
+    peer = await method()
+    return _access_hash(peer)
+
+
+def _peer_access_hash_from_attrs(event) -> int | None:
     peer = getattr(event, "input_chat", None) or getattr(event, "input_sender", None)
+    return _access_hash(peer)
+
+
+def _access_hash(peer) -> int | None:
     access_hash = getattr(peer, "access_hash", None)
     return int(access_hash) if access_hash is not None else None
 

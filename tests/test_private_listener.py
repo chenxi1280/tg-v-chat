@@ -1,8 +1,10 @@
+import asyncio
 from types import SimpleNamespace
 
 from tg_v_chat.domain import MediaKind
 from tg_v_chat.telegram.private_listener import (
     BoundListenerSession,
+    async_private_message_from_event,
     private_message_event_builder,
     private_message_from_event,
 )
@@ -42,3 +44,28 @@ def test_private_listener_subscribes_to_incoming_and_outgoing_messages():
 
     assert builder.incoming is None
     assert builder.outgoing is None
+
+
+def test_async_private_event_reads_access_hash_from_input_sender():
+    class Event:
+        chat_id = 149222
+        sender_id = 149222
+        raw_text = "11"
+        input_chat = None
+        input_sender = None
+        message = SimpleNamespace(id=36, grouped_id=None, photo=None, sticker=None)
+
+        async def get_input_sender(self):
+            return SimpleNamespace(access_hash=222333444)
+
+    binding = BoundListenerSession(
+        account_id=7,
+        system_user_id=42,
+        phone_number="+19525920433",
+        developer_slot="primary",
+        session_string="session",
+    )
+
+    message = asyncio.run(async_private_message_from_event(binding, Event()))
+
+    assert message.peer_access_hash == 222333444
