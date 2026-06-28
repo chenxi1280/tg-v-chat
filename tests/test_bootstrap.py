@@ -101,6 +101,29 @@ def test_telegram_login_code_buttons_are_rendered_as_keypad_rows():
     ]
 
 
+def test_account_home_buttons_are_rendered_in_readable_rows():
+    from tg_v_chat.bot.router import BotResponse, ButtonSpec
+
+    response = BotResponse(
+        "账号管理",
+        buttons=(
+            ButtonSpec("重新登录", "account.relogin:1"),
+            ButtonSpec("绑定 TG 账号", "account.bind.start"),
+            ButtonSpec("我的账号", "account.list"),
+            ButtonSpec("授权状态", "account.status"),
+            ButtonSpec("中转说明", "account.relay_help"),
+            ButtonSpec("帮助", "account.help"),
+        ),
+    )
+    rows = _buttons(response)
+
+    assert [[button.text for button in row] for row in rows] == [
+        ["重新登录", "绑定 TG 账号"],
+        ["我的账号", "授权状态"],
+        ["中转说明", "帮助"],
+    ]
+
+
 def test_bot_router_handles_replies_through_handler():
     commands = []
     router = BotUpdateRouter(commands.append, FakeAccountManagement())

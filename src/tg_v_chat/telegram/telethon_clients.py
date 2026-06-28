@@ -189,6 +189,7 @@ def _reply_to_message_id(message) -> int | None:
 
 
 CODE_KEYPAD_ROW_WIDTHS = (3, 3, 3, 3, 2, 1)
+DEFAULT_BUTTON_ROW_WIDTH = 2
 
 
 def _buttons(response: BotResponse):
@@ -199,7 +200,7 @@ def _buttons(response: BotResponse):
     buttons = [Button.inline(button.text, button.data.encode("utf-8")) for button in response.buttons]
     if _is_code_keypad(response.buttons):
         return _chunk_buttons(buttons, CODE_KEYPAD_ROW_WIDTHS)
-    return buttons
+    return _chunk_buttons_by_width(buttons, DEFAULT_BUTTON_ROW_WIDTH)
 
 
 def _is_code_keypad(buttons) -> bool:
@@ -214,6 +215,10 @@ def _chunk_buttons(buttons, row_widths: tuple[int, ...]):
         rows.append(buttons[cursor : cursor + width])
         cursor += width
     return rows
+
+
+def _chunk_buttons_by_width(buttons, width: int):
+    return [buttons[index : index + width] for index in range(0, len(buttons), width)]
 
 
 async def _send_callback_response(event, response: BotResponse) -> None:
