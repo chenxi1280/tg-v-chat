@@ -94,7 +94,7 @@ def create_active_account(uow, system_user_id=1):
     account = uow.accounts.create(user.id, "+15550000001")
     for slot in DeveloperSlot:
         status = SessionStatus.ACTIVE if slot is DeveloperSlot.PRIMARY else SessionStatus.STANDBY
-        uow.sessions.create(account.id, slot, "encrypted", status)
+        uow.sessions.create(account.id, slot=slot, encrypted_session="encrypted", status=status)
     uow.commit()
     return account
 
@@ -109,7 +109,7 @@ def test_private_push_uses_telegram_user_id_and_stores_internal_owner(uow):
         IncomingPrivateMessage(account.id, 88, 101, MediaKind.TEXT, "hi", None, 0)
     )
     push = uow.pushes.get_by_relay(pushed.relay_message_id)
-    mapping = uow.mappings.get_by_bot_message(pushed.bot_message_id)
+    mapping = uow.mappings.get_by_bot_message(account.system_user_id, pushed.bot_message_id)
 
     assert bot.pushes[0][0] == telegram_user_id
     assert push.system_user_id == account.system_user_id
@@ -135,7 +135,7 @@ def test_relay_persists_display_metadata(uow):
         )
     )
     row = uow.session.get(RelayMessageModel, result.relay_message_id)
-    pushed = uow.mappings.get_by_bot_message(result.bot_message_id)
+    pushed = uow.mappings.get_by_bot_message(account.system_user_id, result.bot_message_id)
 
     assert row.sender_name == "洋芋"
     assert row.sent_at.replace(tzinfo=timezone.utc) == sent_at
@@ -248,14 +248,38 @@ def test_reply_rejects_cross_user_mapping_without_sending(uow):
     )
     uow.users.get_or_create(2)
 
-    with pytest.raises(PermissionError, match="无权使用"):
+    with pytest.raises(LookupError, match="ReplyMapping 不存在"):
         relay.handle_bot_reply(OutgoingReply(2, 703, pushed.bot_message_id, MediaKind.TEXT, "cross-user"))
 
     assert senders.sent == []
 
     relay.handle_bot_reply(OutgoingReply(telegram_user_id, 704, pushed.bot_message_id, MediaKind.TEXT, "owner"))
-    with pytest.raises(PermissionError, match="无权使用"):
+    with pytest.raises(LookupError, match="ReplyMapping 不存在"):
         relay.handle_bot_reply(OutgoingReply(2, 704, pushed.bot_message_id, MediaKind.TEXT, "reply-id-collision"))
+
+
+def test_bot_message_ids_are_scoped_per_system_user(uow):
+    class PerChatBotGateway(FakeBotGateway):
+        def push_private_message(self, system_user_id, message):
+            self.pushes.append((system_user_id, message))
+            return 1
+
+    first_account = create_active_account(uow, system_user_id=1001)
+    second_account = create_active_account(uow, system_user_id=1002)
+    relay = PrivateRelayService(uow, PerChatBotGateway(), FakeSenderPool())
+
+    first = relay.receive_private_message(
+        IncomingPrivateMessage(first_account.id, 88, 101, MediaKind.TEXT, "first", None, 0)
+    )
+    second = relay.receive_private_message(
+        IncomingPrivateMessage(second_account.id, 99, 102, MediaKind.TEXT, "second", None, 0)
+    )
+    first_reply = OutgoingReply(1001, 1, first.bot_message_id, MediaKind.TEXT, "reply one")
+    second_reply = OutgoingReply(1002, 1, second.bot_message_id, MediaKind.TEXT, "reply two")
+
+    assert first.bot_message_id == second.bot_message_id == 1
+    assert relay.handle_bot_reply(first_reply).sent_message_id == 9001
+    assert relay.handle_bot_reply(second_reply).sent_message_id == 9002
 
 
 def test_reply_failover_records_events_and_prevents_duplicate_send(uow):

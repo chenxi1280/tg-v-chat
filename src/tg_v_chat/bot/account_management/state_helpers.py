@@ -77,7 +77,7 @@ def _cancel_challenge_by_id(
     return challenge.bound_tg_account_id
 
 
-def _auth_failure_response(uow, user_id: int, challenge_id: int | None, failure: AuthFailure) -> BotResponse:
+def _auth_failure_response(uow, *, user_id: int, challenge_id: int | None, failure: AuthFailure) -> BotResponse:
     if not failure.restart_required:
         return BotResponse(failure.message, buttons=_cancel_buttons())
     account_id = _cancel_challenge_by_id(uow, challenge_id, AUTH_STATUS_EXPIRED, disable_account=False)

@@ -52,11 +52,12 @@ class TelethonReplySender:
         if session_slot.encrypted_session is None:
             raise SessionFailure(f"{session_slot.developer_slot.value} session 未授权")
         session_string = self._cipher.decrypt(session_slot.encrypted_session)
-        return _run_async(self._send(session_slot, session_string, peer, reply))
+        return _run_async(self._send(session_slot, session_string=session_string, peer=peer, reply=reply))
 
     async def _send(
         self,
         session_slot: SessionSlotRef,
+        *,
         session_string: str,
         peer: TelegramPeer,
         reply: OutgoingReply,

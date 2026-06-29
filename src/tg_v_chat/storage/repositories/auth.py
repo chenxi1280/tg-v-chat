@@ -11,10 +11,10 @@ class AuthChallengeRepository:
     def create(
         self,
         account_id: int,
+        *,
         phone: str,
         slot: DeveloperSlot,
         code_hash: str,
-        *,
         pending_session: str | None = None,
     ):
         model = AuthChallengeModel(

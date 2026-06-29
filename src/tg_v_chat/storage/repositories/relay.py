@@ -93,8 +93,12 @@ class MappingRepository:
         self._session.flush()
         return model
 
-    def get_by_bot_message(self, bot_message_id: int) -> ReplyMappingModel | None:
-        return self._session.query(ReplyMappingModel).filter_by(bot_message_id=bot_message_id).one_or_none()
+    def get_by_bot_message(self, system_user_id: int, bot_message_id: int) -> ReplyMappingModel | None:
+        return (
+            self._session.query(ReplyMappingModel)
+            .filter_by(system_user_id=system_user_id, bot_message_id=bot_message_id)
+            .one_or_none()
+        )
 
 
 class OutgoingReplyRepository:
@@ -104,6 +108,7 @@ class OutgoingReplyRepository:
     def create(
         self,
         reply_id: int,
+        *,
         system_user_id: int,
         relay_id: int,
         sent_id: int,
@@ -120,5 +125,9 @@ class OutgoingReplyRepository:
         self._session.flush()
         return model
 
-    def get_by_reply(self, reply_id: int) -> OutgoingReplyModel | None:
-        return self._session.query(OutgoingReplyModel).filter_by(bot_reply_message_id=reply_id).one_or_none()
+    def get_by_reply(self, system_user_id: int, reply_id: int) -> OutgoingReplyModel | None:
+        return (
+            self._session.query(OutgoingReplyModel)
+            .filter_by(system_user_id=system_user_id, bot_reply_message_id=reply_id)
+            .one_or_none()
+        )

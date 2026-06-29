@@ -96,7 +96,13 @@ class AccountManagementService:
             state = uow.conversation_states.get(user.id)
             if state is None:
                 return _choose_action_response()
-            return self._continue_state(uow, telegram_user_id, user.id, state, text.strip())
+            return self._continue_state(
+                uow,
+                telegram_user_id=telegram_user_id,
+                user_id=user.id,
+                state=state,
+                text=text.strip(),
+            )
 
     def home(self, telegram_user_id: int) -> BotResponse:
         with UnitOfWork(self._session_factory) as uow:
@@ -193,9 +199,9 @@ class AccountManagementService:
             uow.commit()
         return BotResponse("已取消当前操作。", buttons=_home_nav_buttons())
 
-    def _continue_state(self, uow, telegram_user_id: int, user_id: int, state, text: str) -> BotResponse:
+    def _continue_state(self, uow, *, telegram_user_id: int, user_id: int, state, text: str) -> BotResponse:
         if state.state == STATE_AWAITING_PHONE:
-            return self._bind_phone(uow, telegram_user_id, user_id, text)
+            return self._bind_phone(uow, telegram_user_id=telegram_user_id, user_id=user_id, phone=text)
         if state.state == STATE_AWAITING_CODE:
             return _code_prompt_response(
                 uow,
@@ -204,7 +210,7 @@ class AccountManagementService:
                 detail="请使用下方数字按钮输入 Telegram 验证码，不要直接发送验证码消息。",
             )
         if state.state == STATE_AWAITING_PASSWORD:
-            return self._submit_password(uow, user_id, state.auth_challenge_id, text)
+            return self._submit_password(uow, user_id=user_id, challenge_id=state.auth_challenge_id, password=text)
         raise RuntimeError(f"未知账号管理状态: {state.state}")
 
     def handle_code_callback(self, telegram_user_id: int, data: str) -> BotResponse:
@@ -220,12 +226,22 @@ class AccountManagementService:
             if action.name == "clear":
                 return _code_prompt_response(uow, action.challenge_id, "")
             if action.name == "submit":
-                return self._submit_keypad_code(uow, user.id, action.challenge_id, action.buffer)
+                return self._submit_keypad_code(
+                    uow,
+                    user_id=user.id,
+                    challenge_id=action.challenge_id,
+                    code=action.buffer,
+                )
             if action.name == "resend":
-                return self._resend_code(uow, telegram_user_id, user.id, action.challenge_id)
+                return self._resend_code(
+                    uow,
+                    telegram_user_id=telegram_user_id,
+                    user_id=user.id,
+                    challenge_id=action.challenge_id,
+                )
         raise RuntimeError(f"未知验证码按钮操作: {action.name}")
 
-    def _bind_phone(self, uow, telegram_user_id: int, user_id: int, phone: str) -> BotResponse:
+    def _bind_phone(self, uow, *, telegram_user_id: int, user_id: int, phone: str) -> BotResponse:
         if not PHONE_PATTERN.match(phone):
             return BotResponse("手机号需包含国家区号，例如 +8613812345678。", buttons=_cancel_buttons())
         auth = AuthService(uow, self._authenticator, self._cipher)
@@ -234,7 +250,7 @@ class AccountManagementService:
         uow.commit()
         return _code_prompt_response(uow, challenge.id, "")
 
-    def _submit_keypad_code(self, uow, user_id: int, challenge_id: int, code: str) -> BotResponse:
+    def _submit_keypad_code(self, uow, *, user_id: int, challenge_id: int, code: str) -> BotResponse:
         if not code:
             return _code_prompt_response(uow, challenge_id, "", detail="请先使用数字按钮输入验证码。")
         auth = AuthService(uow, self._authenticator, self._cipher)
@@ -242,7 +258,7 @@ class AccountManagementService:
             step = auth.submit_code(challenge_id, code)
         except AuthFailure as exc:
             if exc.restart_required:
-                return _auth_failure_response(uow, user_id, challenge_id, exc)
+                return _auth_failure_response(uow, user_id=user_id, challenge_id=challenge_id, failure=exc)
             return _code_prompt_response(uow, challenge_id, code, detail=exc.message)
         if step is AuthStep.PASSWORD_REQUIRED:
             uow.conversation_states.set(user_id, STATE_AWAITING_PASSWORD, challenge_id)
@@ -252,7 +268,7 @@ class AccountManagementService:
         uow.commit()
         return BotResponse("绑定成功。", buttons=_home_nav_buttons())
 
-    def _resend_code(self, uow, telegram_user_id: int, user_id: int, challenge_id: int) -> BotResponse:
+    def _resend_code(self, uow, *, telegram_user_id: int, user_id: int, challenge_id: int) -> BotResponse:
         challenge = uow.auth_challenges.get(challenge_id)
         phone_number = challenge.phone_number
         _delete_incomplete_account(uow, challenge.bound_tg_account_id)
@@ -263,12 +279,12 @@ class AccountManagementService:
         uow.commit()
         return _code_prompt_response(uow, new_challenge.id, "", detail="验证码已重新发送，请输入最新验证码。")
 
-    def _submit_password(self, uow, user_id: int, challenge_id: int | None, password: str) -> BotResponse:
+    def _submit_password(self, uow, *, user_id: int, challenge_id: int | None, password: str) -> BotResponse:
         auth = AuthService(uow, self._authenticator, self._cipher)
         try:
             auth.submit_password(_require_challenge(challenge_id), password)
         except AuthFailure as exc:
-            return _auth_failure_response(uow, user_id, challenge_id, exc)
+            return _auth_failure_response(uow, user_id=user_id, challenge_id=challenge_id, failure=exc)
         uow.conversation_states.clear(user_id)
         uow.commit()
         return BotResponse("绑定成功。", buttons=_home_nav_buttons())

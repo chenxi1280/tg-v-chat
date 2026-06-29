@@ -31,11 +31,19 @@ def test_private_text_event_is_converted_to_relay_message():
 
     message = private_message_from_event(binding, event)
 
+    _assert_private_text_identity(message)
+    _assert_private_text_payload(message)
+
+
+def _assert_private_text_identity(message) -> None:
     assert message.bound_tg_account_id == 7
     assert message.peer_id == 149222
     assert message.peer_access_hash == 987654321
     assert message.sender_name is None
     assert message.sent_at is None
+
+
+def _assert_private_text_payload(message) -> None:
     assert message.source_message_id == 36
     assert message.media_kind is MediaKind.TEXT
     assert message.payload == "11"

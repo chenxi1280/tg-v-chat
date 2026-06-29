@@ -38,7 +38,7 @@ def main() -> None:
         app_configs,
         config.bot_token,
         runtime.session_factory,
-        runtime.session_cipher,
+        session_cipher=runtime.session_cipher,
     )
     run_role(args.role, bot_runner=bot_process.run, listener_runner=listener_process.run)
 

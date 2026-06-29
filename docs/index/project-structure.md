@@ -26,7 +26,7 @@
 | Runtime healthcheck | `src/tg_v_chat/healthcheck.py` | dev | Validates required env and PostgreSQL connectivity |
 | Runtime process | `src/tg_v_chat/runtime.py` | dev | Role-based bot/listener/worker process entrypoint |
 | Storage bootstrap | `src/tg_v_chat/storage/database.py` | dev | SQLAlchemy engine/session factory; runtime requires PostgreSQL unless tests opt in to SQLite |
-| Migrations | `migrations/versions/0001_initial_private_relay.py`; `migrations/versions/0002_bot_conversation_states.py` | dev | Alembic schema migrations; production must not rely on `Base.metadata.create_all` |
+| Migrations | `migrations/versions/0001_initial_private_relay.py` ... `migrations/versions/0007_scope_bot_message_ids.py` | dev | Alembic schema migrations; production must not rely on `Base.metadata.create_all` |
 | CI release workflow | `.github/workflows/deploy-production.yml` | dev | release branch and manual trigger; PostgreSQL service, Alembic migration, pytest, GHCR image, SSH compose deploy |
 | Server compose | `docker-compose.server.yml` | dev | Uses infra-compose PostgreSQL via `infra_default`; defines migrate, bot, listener, worker services |
 
@@ -129,9 +129,9 @@ Single-file modules that exceeded the maintainability threshold were split into 
 | AuthChallenge | `auth_challenges` | phone code and optional 2FA flow state |
 | BotConversationState | `bot_conversation_states` | one active phone/code/password wizard state per SystemUser |
 | RelayMessage | `relay_messages` | incoming idempotency by bound account and source message id |
-| BotPushMessage | `bot_push_messages` | Bot message id generated for reply mapping |
-| ReplyMapping | `reply_mappings` | bot_message_id to original peer/source message context |
-| OutgoingReply | `outgoing_replies` | outgoing idempotency by bot reply message id |
+| BotPushMessage | `bot_push_messages` | Bot message id generated for reply mapping; unique by `system_user_id + bot_message_id` |
+| ReplyMapping | `reply_mappings` | `system_user_id + bot_message_id` to original peer/source message context |
+| OutgoingReply | `outgoing_replies` | outgoing idempotency by `system_user_id + bot_reply_message_id` |
 | SessionFailoverEvent | `session_failover_events` | primary -> standby switch evidence |
 
 ## Test And Verification Entrypoints
@@ -152,7 +152,8 @@ Single-file modules that exceeded the maintainability threshold were split into 
 - Incoming private message idempotency prevents duplicate Bot pushes.
 - ReplyMapping is required for outbound relay; non-reply input fails explicitly.
 - ReplyMapping and outgoing idempotency records are scoped to `system_user_id`; cross-user replay is rejected before sender invocation.
-- Outgoing bot replies are idempotent by `bot_reply_message_id`.
+- Bot message IDs are scoped per SystemUser, matching Telegram chat-local `message_id` semantics.
+- Outgoing bot replies are idempotent by `system_user_id + bot_reply_message_id`.
 - Session-layer primary failure switches to standby_1 and records `SessionFailoverEvent`.
 - Exhausted sessions raise explicit `SessionFailure` and record an `exhausted` failover event.
 - Media groups defer pushes until the sequence anchor arrives, then flush pending relays by sequence.

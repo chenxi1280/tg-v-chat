@@ -90,19 +90,21 @@ class RelayMessageModel(Base):
 
 class BotPushMessageModel(Base):
     __tablename__ = "bot_push_messages"
+    __table_args__ = (UniqueConstraint("system_user_id", "bot_message_id", name="uq_bot_push_user_message"),)
 
     id = Column(Integer, primary_key=True)
     relay_message_id = Column(Integer, ForeignKey("relay_messages.id"), nullable=False)
     system_user_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
-    bot_message_id = Column(Integer, nullable=False, unique=True)
+    bot_message_id = Column(Integer, nullable=False)
     status = Column(String(32), nullable=False, default="pushed")
 
 
 class ReplyMappingModel(Base):
     __tablename__ = "reply_mappings"
+    __table_args__ = (UniqueConstraint("system_user_id", "bot_message_id", name="uq_reply_mapping_user_message"),)
 
     id = Column(Integer, primary_key=True)
-    bot_message_id = Column(Integer, nullable=False, unique=True)
+    bot_message_id = Column(Integer, nullable=False)
     system_user_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
     relay_message_id = Column(Integer, ForeignKey("relay_messages.id"), nullable=False)
     bound_tg_account_id = Column(Integer, nullable=False)
@@ -115,9 +117,10 @@ class ReplyMappingModel(Base):
 
 class OutgoingReplyModel(Base):
     __tablename__ = "outgoing_replies"
+    __table_args__ = (UniqueConstraint("system_user_id", "bot_reply_message_id", name="uq_outgoing_reply_user_message"),)
 
     id = Column(Integer, primary_key=True)
-    bot_reply_message_id = Column(Integer, unique=True, nullable=False)
+    bot_reply_message_id = Column(Integer, nullable=False)
     system_user_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
     relay_message_id = Column(Integer, nullable=False)
     sent_message_id = Column(Integer, nullable=False)

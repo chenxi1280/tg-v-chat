@@ -30,6 +30,7 @@ class TelethonPrivateListenerProcess:
         app_configs: dict[DeveloperSlot, DeveloperAppConfig],
         bot_token: str,
         session_factory,
+        *,
         session_cipher: SessionCipher,
     ):
         self._app_configs = app_configs

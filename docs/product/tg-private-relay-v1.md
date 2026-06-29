@@ -106,7 +106,7 @@
 - affected_services: bot update handler, user session listener, auth flow service, relay mapping service, session selector, media relay service.
 - affected_workers: Telegram user session listener workers, retry/failover worker, session health checker.
 - data_models: SystemUser, DeveloperAppSlot, BoundTgAccount, TgSessionSlot, RelayMessage, BotPushMessage, ReplyMapping, SessionFailoverEvent.
-- idempotency: incoming message 使用 bound_tg_account_id + source_message_id 去重；outgoing reply 使用 bot_reply_message_id 去重。
+- idempotency: incoming message 使用 bound_tg_account_id + source_message_id 去重；outgoing reply 使用 system_user_id + bot_reply_message_id 去重。
 - concurrency: 同一绑定账号的 session failover 需要串行化；同一 media_group 内按 sequence 顺序发送。
 - failure_handling: 授权失败、session 全部不可用、映射缺失、媒体下载失败、发送失败均返回明确错误并记录。
 
@@ -118,17 +118,17 @@
 2. Resolve BoundTgAccount, PrivateChatPeer, source_message_id, media_group_id, and sequence.
 3. Write RelayMessage and media metadata.
 4. Send BotPushMessage to SystemUser.
-5. Write ReplyMapping from bot_message_id to relay context.
+5. Write ReplyMapping from system_user_id + bot_message_id to relay context.
 6. Use incoming idempotency key: bound_tg_account_id + source_message_id.
 
 ### User Reply
 
 1. Bot receives SystemUser reply.
-2. Read reply_to_message_id and resolve ReplyMapping.
+2. Read reply_to_message_id and resolve ReplyMapping by system_user_id + bot_message_id.
 3. Select healthy TgSessionSlot by primary, standby_1, standby_2 order.
 4. Send text, emoji, image, or sticker to PrivateChatPeer.
 5. Write send result and failover events.
-6. Use outgoing idempotency key: bot_reply_message_id.
+6. Use outgoing idempotency key: system_user_id + bot_reply_message_id.
 7. Missing ReplyMapping, exhausted sessions, media failure, and unavailable peer must return explicit failure.
 
 ### Auth Flow

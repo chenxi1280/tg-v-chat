@@ -67,9 +67,9 @@ class AuthService:
         pending_session = _encrypt_optional(self._cipher, external.pending_session)
         challenge = self._uow.auth_challenges.create(
             account.id,
-            phone_number,
-            slot,
-            external.phone_code_hash,
+            phone=phone_number,
+            slot=slot,
+            code_hash=external.phone_code_hash,
             pending_session=pending_session,
         )
         self._uow.commit()
@@ -102,7 +102,7 @@ class AuthService:
     def _activate_account(self, account_id: int, active_slot: DeveloperSlot, session_value: str):
         encrypted = self._cipher.encrypt(session_value)
         for slot in DeveloperSlot:
-            self._create_auth_slot(account_id, active_slot, encrypted, slot)
+            self._create_auth_slot(account_id, active_slot=active_slot, encrypted=encrypted, slot=slot)
         account = self._uow.accounts.mark_active(account_id)
         self._uow.commit()
         return account
@@ -110,13 +110,14 @@ class AuthService:
     def _create_auth_slot(
         self,
         account_id: int,
+        *,
         active_slot: DeveloperSlot,
         encrypted: str,
         slot: DeveloperSlot,
     ) -> None:
         status = SessionStatus.ACTIVE if slot is active_slot else SessionStatus.EXPIRED
         session_value = encrypted if slot is active_slot else None
-        self._uow.sessions.create(account_id, slot, session_value, status)
+        self._uow.sessions.create(account_id, slot=slot, encrypted_session=session_value, status=status)
 
 
 def _challenge_from_model(

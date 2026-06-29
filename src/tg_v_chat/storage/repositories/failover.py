@@ -8,7 +8,7 @@ class FailoverRepository:
     def __init__(self, session):
         self._session = session
 
-    def create(self, account_id: int, from_slot: DeveloperSlot, to_slot: DeveloperSlot, reason: str):
+    def create(self, account_id: int, *, from_slot: DeveloperSlot, to_slot: DeveloperSlot, reason: str):
         model = SessionFailoverEventModel(
             bound_tg_account_id=account_id,
             from_slot=from_slot.value,

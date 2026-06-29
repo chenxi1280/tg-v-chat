@@ -8,7 +8,14 @@ class SessionSlotRepository:
     def __init__(self, session):
         self._session = session
 
-    def create(self, account_id: int, slot: DeveloperSlot, encrypted_session: str, status: SessionStatus):
+    def create(
+        self,
+        account_id: int,
+        *,
+        slot: DeveloperSlot,
+        encrypted_session: str | None,
+        status: SessionStatus,
+    ):
         model = TgSessionSlotModel(
             bound_tg_account_id=account_id,
             developer_slot=slot.value,

@@ -59,7 +59,7 @@ def bot_parts():
     return router, authenticator, commands, factory
 
 
-def submit_code_with_keypad(router, response, code="12345", user_id=146517):
+def submit_code_with_keypad(router, response, *, code="12345", user_id=146517):
     for digit in code:
         button = next(item for item in response.buttons if item.text == digit)
         response = router.handle_callback(BotCallback(user_id, button.data))[0]

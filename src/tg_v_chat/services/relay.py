@@ -42,7 +42,12 @@ class PrivateRelayService:
             self._uow.commit()
             return IncomingRelayResult(relay.id, None, False)
         owner = self._owner_for_account(message.bound_tg_account_id)
-        self._push_ready_relays(owner.id, owner.telegram_user_id, message, relay)
+        self._push_ready_relays(
+            owner.id,
+            telegram_user_id=owner.telegram_user_id,
+            message=message,
+            current_relay=relay,
+        )
         self._uow.commit()
         push = self._uow.pushes.get_by_relay(relay.id)
         return IncomingRelayResult(relay.id, push.bot_message_id if push else None, False)
@@ -55,23 +60,19 @@ class PrivateRelayService:
         internal_user_id = self._internal_user_id(reply.system_user_id)
         if reply.reply_to_message_id is None:
             raise ValueError("用户必须 reply Bot 推送消息才能代发")
-        existing = self._uow.outgoing.get_by_reply(reply.bot_reply_message_id)
+        existing = self._uow.outgoing.get_by_reply(internal_user_id, reply.bot_reply_message_id)
         if existing:
-            if existing.system_user_id != internal_user_id:
-                raise PermissionError("无权使用其他用户的 outgoing reply")
             return _outgoing_result(existing, True)
-        mapping = self._uow.mappings.get_by_bot_message(reply.reply_to_message_id)
+        mapping = self._uow.mappings.get_by_bot_message(internal_user_id, reply.reply_to_message_id)
         if not mapping:
             raise LookupError("ReplyMapping 不存在，无法代发")
-        if mapping.system_user_id != internal_user_id:
-            raise PermissionError("无权使用其他用户的 ReplyMapping")
         sent_id, slot = self._send_with_failover(mapping, reply)
         row = self._uow.outgoing.create(
             reply.bot_reply_message_id,
-            internal_user_id,
-            mapping.relay_message_id,
-            sent_id,
-            slot,
+            system_user_id=internal_user_id,
+            relay_id=mapping.relay_message_id,
+            sent_id=sent_id,
+            slot=slot,
         )
         self._uow.commit()
         return _outgoing_result(row, False)
@@ -95,6 +96,7 @@ class PrivateRelayService:
     def _push_ready_relays(
         self,
         internal_user_id: int,
+        *,
         telegram_user_id: int,
         message: IncomingPrivateMessage,
         current_relay,
@@ -143,9 +145,9 @@ class PrivateRelayService:
         if index + 1 < len(slots):
             self._uow.failovers.create(
                 failed.bound_tg_account_id,
-                DeveloperSlot(failed.developer_slot),
-                DeveloperSlot(slots[index + 1].developer_slot),
-                reason,
+                from_slot=DeveloperSlot(failed.developer_slot),
+                to_slot=DeveloperSlot(slots[index + 1].developer_slot),
+                reason=reason,
             )
             return
         self._uow.failovers.create_exhausted(

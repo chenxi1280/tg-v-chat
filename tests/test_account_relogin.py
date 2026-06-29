@@ -95,6 +95,12 @@ def test_relogin_restarts_abandoned_binding_with_same_phone():
     relogin = next(button for button in home.buttons if button.text == "重新登录")
     response = router.handle_callback(BotCallback(146517, relogin.data))[0]
 
+    _assert_relogin_code_prompt(response, authenticator)
+    with UnitOfWork(factory) as uow:
+        _assert_single_restarted_binding(uow)
+
+
+def _assert_relogin_code_prompt(response, authenticator) -> None:
     assert "验证码已重新发送" in response.text
     assert "不要直接发送验证码消息" in response.text
     assert [button.text for button in response.buttons[:3]] == ["1", "2", "3"]
@@ -103,15 +109,18 @@ def test_relogin_restarts_abandoned_binding_with_same_phone():
         ("+15550000001", DeveloperSlot.PRIMARY),
         ("+15550000001", DeveloperSlot.PRIMARY),
     ]
-    with UnitOfWork(factory) as uow:
-        user = uow.users.get_by_telegram_id(146517)
-        accounts = uow.accounts.list_for_user(user.id)
-        state = uow.conversation_states.get(user.id)
-        assert len(accounts) == 1
-        assert accounts[0].phone_number == "+15550000001"
-        assert accounts[0].status == "binding"
-        challenges = uow.auth_challenges.list_for_account(accounts[0].id)
-        assert len(challenges) == 1
-        assert challenges[0].status == "code_required"
-        assert state.state == "awaiting_code"
-        assert state.auth_challenge_id == challenges[0].id
+
+
+def _assert_single_restarted_binding(uow) -> None:
+    user = uow.users.get_by_telegram_id(146517)
+    accounts = uow.accounts.list_for_user(user.id)
+    state = uow.conversation_states.get(user.id)
+    challenges = uow.auth_challenges.list_for_account(accounts[0].id)
+
+    assert len(accounts) == 1
+    assert accounts[0].phone_number == "+15550000001"
+    assert accounts[0].status == "binding"
+    assert len(challenges) == 1
+    assert challenges[0].status == "code_required"
+    assert state.state == "awaiting_code"
+    assert state.auth_challenge_id == challenges[0].id

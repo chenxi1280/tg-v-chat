@@ -10,17 +10,30 @@ if TYPE_CHECKING:
 
 
 def private_message_from_event(binding: BoundListenerSession, event) -> IncomingPrivateMessage:
-    return _private_message_from_event(binding, event, _peer_access_hash_from_attrs(event), None, None)
+    return _private_message_from_event(
+        binding,
+        event,
+        peer_access_hash=_peer_access_hash_from_attrs(event),
+        sender_name=None,
+        sent_at=None,
+    )
 
 
 async def async_private_message_from_event(binding: BoundListenerSession, event) -> IncomingPrivateMessage:
     access_hash = await _peer_access_hash(event)
-    return _private_message_from_event(binding, event, access_hash, await _sender_name(event), _sent_at(event))
+    return _private_message_from_event(
+        binding,
+        event,
+        peer_access_hash=access_hash,
+        sender_name=await _sender_name(event),
+        sent_at=_sent_at(event),
+    )
 
 
 def _private_message_from_event(
     binding: BoundListenerSession,
     event,
+    *,
     peer_access_hash: int | None,
     sender_name: str | None,
     sent_at: datetime | None,
