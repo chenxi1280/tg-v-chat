@@ -34,6 +34,7 @@ from tg_v_chat.bot.account_management.state_helpers import (
     _cancel_challenge_if_needed,
     _delete_account_for_user,
     _delete_incomplete_account,
+    _resume_pending_password_binding,
 )
 from tg_v_chat.bot.code_keypad import parse_code_action, require_code_state
 from tg_v_chat.bot.router import BotResponse
@@ -107,6 +108,9 @@ class AccountManagementService:
     def home(self, telegram_user_id: int) -> BotResponse:
         with UnitOfWork(self._session_factory) as uow:
             user = uow.users.get_or_create(telegram_user_id)
+            pending = _resume_pending_password_binding(uow, user.id)
+            if pending is not None:
+                return pending
             uow.commit()
             accounts = uow.accounts.list_for_user(user.id)
             text = _home_text(accounts)

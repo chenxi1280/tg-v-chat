@@ -81,6 +81,28 @@ def test_code_and_password_complete_binding():
         assert len(uow.sessions.list_for_account(account.id)) == 3
 
 
+def test_start_resumes_password_required_binding_without_state():
+    router, _authenticator, factory = _build_router(FakeAuthenticator(needs_password=True))
+
+    router.handle_callback(BotCallback(146517, "account.bind.start"))
+    code_prompt = router.handle(BotIncomingMessage(146517, 11, None, "+15550000001"))[0]
+    submit_code_with_keypad(router, code_prompt)
+    with UnitOfWork(factory) as uow:
+        user = uow.users.get_by_telegram_id(146517)
+        uow.conversation_states.clear(user.id)
+        uow.commit()
+
+    prompt = router.handle(BotIncomingMessage(146517, 12, None, "/start"))[0]
+    success = router.handle(BotIncomingMessage(146517, 13, None, "secret"))[0]
+
+    assert "2FA" in prompt.text
+    assert "绑定成功" in success.text
+    with UnitOfWork(factory) as uow:
+        user = uow.users.get_by_telegram_id(146517)
+        account = uow.accounts.list_for_user(user.id)[0]
+        assert account.status == "active"
+
+
 def test_invalid_code_keeps_code_state():
     failure = AuthFailure("验证码不正确，请检查后重新输入。")
     router, _authenticator, factory = _build_router(FakeAuthenticator(code_failure=failure))

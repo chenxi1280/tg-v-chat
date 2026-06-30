@@ -5,10 +5,29 @@ from tg_v_chat.bot.account_management.constants import (
     ACCOUNT_STATUS_BINDING,
     AUTH_STATUS_CANCELLED,
     AUTH_STATUS_EXPIRED,
+    STATE_AWAITING_PASSWORD,
 )
 from tg_v_chat.bot.account_management.rendering import _cancel_buttons, _relogin_nav_buttons
 from tg_v_chat.bot.router import BotResponse
 from tg_v_chat.services.auth import AuthFailure, AuthStep
+
+
+def _resume_pending_password_binding(uow, user_id: int) -> BotResponse | None:
+    for account in uow.accounts.list_by_status_for_user(user_id, ACCOUNT_STATUS_BINDING):
+        challenge = _password_required_challenge(uow, account.id)
+        if challenge is None:
+            continue
+        uow.conversation_states.set(user_id, STATE_AWAITING_PASSWORD, challenge.id)
+        uow.commit()
+        return BotResponse("检测到未完成的 2FA 验证，请输入二次密码。", buttons=_cancel_buttons())
+    return None
+
+
+def _password_required_challenge(uow, account_id: int):
+    for challenge in uow.auth_challenges.list_for_account(account_id):
+        if challenge.status == AuthStep.PASSWORD_REQUIRED.value:
+            return challenge
+    return None
 
 
 def _cancel_abandoned_bindings(uow, user_id: int) -> None:
