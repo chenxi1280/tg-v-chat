@@ -50,6 +50,8 @@ def _private_message_from_event(
         sequence=1,
         sender_name=sender_name,
         sent_at=sent_at,
+        recipient_account_name=binding.display_name,
+        recipient_username=binding.username,
     )
 
 

@@ -32,6 +32,13 @@ class AuthChallenge:
 
 
 @dataclass(frozen=True)
+class AuthenticatedSession:
+    session_string: str
+    display_name: str | None
+    username: str | None
+
+
+@dataclass(frozen=True)
 class PasswordRequired:
     pending_session: str
 
@@ -40,10 +47,10 @@ class TelegramAuthenticator(Protocol):
     def start(self, phone_number: str, slot: DeveloperSlot) -> AuthChallenge:
         raise NotImplementedError
 
-    def complete_code(self, challenge: AuthChallenge, code: str) -> str | AuthStep | PasswordRequired:
+    def complete_code(self, challenge: AuthChallenge, code: str) -> AuthenticatedSession | PasswordRequired:
         raise NotImplementedError
 
-    def complete_password(self, challenge: AuthChallenge, password: str) -> str:
+    def complete_password(self, challenge: AuthChallenge, password: str) -> AuthenticatedSession:
         raise NotImplementedError
 
 
@@ -84,25 +91,31 @@ class AuthService:
             model.status = AuthStep.PASSWORD_REQUIRED.value
             self._uow.commit()
             return AuthStep.PASSWORD_REQUIRED
-        if result is AuthStep.PASSWORD_REQUIRED:
-            model.status = AuthStep.PASSWORD_REQUIRED.value
-            self._uow.commit()
-            return AuthStep.PASSWORD_REQUIRED
         model.status = AuthStep.COMPLETE.value
-        self._activate_account(model.bound_tg_account_id, DeveloperSlot(model.developer_slot), str(result))
+        self._activate_account(model.bound_tg_account_id, DeveloperSlot(model.developer_slot), result)
         return AuthStep.COMPLETE
 
     def submit_password(self, challenge_id: int, password: str):
         model = self._uow.auth_challenges.get(challenge_id)
         challenge = _challenge_from_model(model, self._cipher, include_pending=True)
-        session_value = self._authenticator.complete_password(challenge, password)
+        auth_session = self._authenticator.complete_password(challenge, password)
         model.status = AuthStep.COMPLETE.value
-        return self._activate_account(model.bound_tg_account_id, DeveloperSlot(model.developer_slot), session_value)
+        return self._activate_account(model.bound_tg_account_id, DeveloperSlot(model.developer_slot), auth_session)
 
-    def _activate_account(self, account_id: int, active_slot: DeveloperSlot, session_value: str):
-        encrypted = self._cipher.encrypt(session_value)
+    def _activate_account(
+        self,
+        account_id: int,
+        active_slot: DeveloperSlot,
+        auth_session: AuthenticatedSession,
+    ):
+        encrypted = self._cipher.encrypt(auth_session.session_string)
         for slot in DeveloperSlot:
             self._create_auth_slot(account_id, active_slot=active_slot, encrypted=encrypted, slot=slot)
+        self._uow.accounts.update_profile(
+            account_id,
+            display_name=auth_session.display_name,
+            username=auth_session.username,
+        )
         account = self._uow.accounts.mark_active(account_id)
         self._uow.commit()
         return account

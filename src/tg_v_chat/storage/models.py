@@ -40,6 +40,8 @@ class BoundTgAccountModel(Base):
     id = Column(Integer, primary_key=True)
     system_user_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
     phone_number = Column(String(64), nullable=False)
+    display_name = Column(Text, nullable=True)
+    username = Column(String(64), nullable=True)
     status = Column(String(32), nullable=False, default="binding")
     created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
     user = relationship("SystemUserModel")

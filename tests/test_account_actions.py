@@ -7,7 +7,7 @@ from tg_v_chat.storage.database import create_session_factory, init_db
 from tg_v_chat.storage.repositories import UnitOfWork
 
 
-def test_accounts_list_masks_phone_number(bot_parts):
+def test_accounts_list_shows_account_name_and_username(bot_parts):
     router, _authenticator, _commands, _factory = bot_parts
     router.handle_callback(BotCallback(146517, "account.bind.start"))
     code_prompt = router.handle(BotIncomingMessage(146517, 11, None, "+15550000001"))[0]
@@ -15,9 +15,23 @@ def test_accounts_list_masks_phone_number(bot_parts):
 
     response = router.handle(BotIncomingMessage(146517, 13, None, "/accounts"))[0]
 
-    assert "+15550****0001" in response.text
+    assert "小号A（@example_user）｜active" in response.text
     assert "+15550000001" not in response.text
     assert response.buttons[0].data.startswith("account.detail:")
+
+
+def test_account_detail_shows_account_name_username_and_masked_phone(bot_parts):
+    router, _authenticator, _commands, _factory = bot_parts
+    router.handle_callback(BotCallback(146517, "account.bind.start"))
+    code_prompt = router.handle(BotIncomingMessage(146517, 11, None, "+15550000001"))[0]
+    submit_code_with_keypad(router, code_prompt)
+    list_response = router.handle_callback(BotCallback(146517, "account.list"))[0]
+
+    detail = router.handle_callback(BotCallback(146517, list_response.buttons[0].data))[0]
+
+    assert "接收账号：小号A" in detail.text
+    assert "用户名：@example_user" in detail.text
+    assert "手机号：+15550****0001" in detail.text
 
 
 def test_account_detail_and_disable_are_scoped_to_owner(bot_parts):

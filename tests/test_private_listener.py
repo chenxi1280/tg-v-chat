@@ -3,6 +3,8 @@ from datetime import datetime, timezone
 from types import SimpleNamespace
 
 from tg_v_chat.domain import MediaKind
+from tg_v_chat.storage.database import create_session_factory, init_db
+from tg_v_chat.storage.repositories import UnitOfWork
 from tg_v_chat.telegram.private_listener import (
     BoundListenerSession,
     _format_push_message,
@@ -10,6 +12,7 @@ from tg_v_chat.telegram.private_listener import (
     private_message_event_builder,
     private_message_from_event,
 )
+from tg_v_chat.telegram.private_listener.process import _sync_bound_account_identity
 
 
 def test_private_text_event_is_converted_to_relay_message():
@@ -25,6 +28,8 @@ def test_private_text_event_is_converted_to_relay_message():
         account_id=7,
         system_user_id=42,
         phone_number="+19525920433",
+        display_name="小号A",
+        username="example_user",
         developer_slot="primary",
         session_string="session",
     )
@@ -74,6 +79,8 @@ def test_async_private_event_reads_access_hash_from_input_sender():
         account_id=7,
         system_user_id=42,
         phone_number="+19525920433",
+        display_name="小号A",
+        username="example_user",
         developer_slot="primary",
         session_string="session",
     )
@@ -104,6 +111,8 @@ def test_async_private_event_reads_sender_name_and_sent_at():
         account_id=7,
         system_user_id=42,
         phone_number="+19525920433",
+        display_name="小号A",
+        username="example_user",
         developer_slot="primary",
         session_string="session",
     )
@@ -114,9 +123,49 @@ def test_async_private_event_reads_sender_name_and_sent_at():
     assert message.sent_at == sent_at
 
 
-def test_push_message_display_shows_name_content_and_time_only():
+def test_listener_syncs_existing_account_identity_from_session_user():
+    class Client:
+        async def get_me(self):
+            return SimpleNamespace(first_name="接收", last_name="账号", username="receiver_user")
+
+    factory = create_session_factory("sqlite:///:memory:")
+    init_db(factory)
+    with UnitOfWork(factory) as uow:
+        user = uow.users.get_or_create(42)
+        account = uow.accounts.create(user.id, "+19525920433")
+        uow.commit()
+
+    binding = BoundListenerSession(
+        account_id=1,
+        system_user_id=42,
+        phone_number="+19525920433",
+        display_name=None,
+        username=None,
+        developer_slot="primary",
+        session_string="session",
+    )
+
+    updated = asyncio.run(_sync_bound_account_identity(Client(), binding, factory))
+
+    assert updated.display_name == "接收 账号"
+    assert updated.username == "receiver_user"
+    with UnitOfWork(factory) as uow:
+        account = uow.accounts.get(1)
+        assert account.display_name == "接收 账号"
+        assert account.username == "receiver_user"
+
+
+def test_push_message_display_shows_sender_recipient_username_content_and_time():
     message = private_message_from_event(
-        BoundListenerSession(7, 42, "+19525920433", "primary", "session"),
+        BoundListenerSession(
+            account_id=7,
+            system_user_id=42,
+            phone_number="+19525920433",
+            display_name="小号A",
+            username="example_user",
+            developer_slot="primary",
+            session_string="session",
+        ),
         SimpleNamespace(
             chat_id=149222,
             raw_text="12131",
@@ -141,7 +190,16 @@ def test_push_message_display_shows_name_content_and_time_only():
 
     formatted = _format_push_message(message)
 
-    assert formatted == "发送人：洋芋\n时间：2026-06-29 00:12:55\n内容：12131"
+    assert formatted == "\n".join(
+        (
+            "发送人：洋芋",
+            "接收账号：小号A",
+            "接收用户名：@example_user",
+            "时间：2026-06-29 00:12:55",
+            "内容：12131",
+        )
+    )
+    assert "+19525920433" not in formatted
     assert "账号 ID" not in formatted
     assert "来源 ID" not in formatted
     assert "消息 ID" not in formatted

@@ -56,6 +56,19 @@ class AccountRepository:
         self._session.flush()
         return account
 
+    def update_profile(
+        self,
+        account_id: int,
+        *,
+        display_name: str | None,
+        username: str | None,
+    ) -> BoundTgAccountModel:
+        account = self.get(account_id)
+        account.display_name = _clean_text(display_name)
+        account.username = _clean_username(username)
+        self._session.flush()
+        return account
+
     def get(self, account_id: int) -> BoundTgAccountModel:
         account = self._session.get(BoundTgAccountModel, account_id)
         if not account:
@@ -99,3 +112,17 @@ class AccountRepository:
 
     def _has_sessions(self, account_id: int) -> bool:
         return self._session.query(TgSessionSlotModel.id).filter_by(bound_tg_account_id=account_id).first() is not None
+
+
+def _clean_text(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned or None
+
+
+def _clean_username(value: str | None) -> str | None:
+    cleaned = _clean_text(value)
+    if cleaned is None:
+        return None
+    return cleaned[1:] if cleaned.startswith("@") else cleaned

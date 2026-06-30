@@ -17,6 +17,21 @@ def _mask_phone(phone: str) -> str:
     return f"{phone[:6]}****{phone[-4:]}"
 
 
+def _account_name(account) -> str:
+    return account.display_name or "未命名账号"
+
+
+def _account_username(account) -> str:
+    username = account.username
+    if not username:
+        return "未设置"
+    return username if username.startswith("@") else f"@{username}"
+
+
+def _account_label(account) -> str:
+    return f"{_account_name(account)}（{_account_username(account)}）"
+
+
 def _first_relogin_account(accounts):
     return next((account for account in accounts if account.status == ACCOUNT_STATUS_BINDING), None)
 
@@ -60,12 +75,12 @@ def _accounts_text(accounts) -> str:
     if not accounts:
         return "我的账号\n\n暂无绑定账号。"
     lines = ["我的账号", ""]
-    lines.extend(f"{index}. {_mask_phone(item.phone_number)}｜{item.status}" for index, item in enumerate(accounts, 1))
+    lines.extend(f"{index}. {_account_label(item)}｜{item.status}" for index, item in enumerate(accounts, 1))
     return "\n".join(lines)
 
 
 def _account_list_buttons(accounts) -> tuple[ButtonSpec, ...]:
-    buttons = [ButtonSpec(_mask_phone(account.phone_number), f"account.detail:{account.id}") for account in accounts]
+    buttons = [ButtonSpec(_account_label(account), f"account.detail:{account.id}") for account in accounts]
     buttons.append(ButtonSpec("绑定 TG 账号", "account.bind.start"))
     buttons.append(ButtonSpec("返回首页", "account.home"))
     return tuple(buttons)
@@ -77,7 +92,9 @@ def _detail_text(account, sessions) -> str:
         (
             "账号详情",
             "",
-            f"账号：{_mask_phone(account.phone_number)}",
+            f"接收账号：{_account_name(account)}",
+            f"用户名：{_account_username(account)}",
+            f"手机号：{_mask_phone(account.phone_number)}",
             f"状态：{account.status}",
             f"主授权：{session_status.get('primary', 'missing')}",
             f"备用 1：{session_status.get('standby_1', 'missing')}",
@@ -90,7 +107,7 @@ def _status_text(accounts) -> str:
     if not accounts:
         return "授权状态\n\n暂无绑定账号。"
     lines = ["授权状态", ""]
-    lines.extend(f"{_mask_phone(item.phone_number)}：{item.status}" for item in accounts)
+    lines.extend(f"{_account_label(item)}：{item.status}" for item in accounts)
     return "\n".join(lines)
 
 
@@ -127,7 +144,7 @@ def _disable_confirm_text(account) -> str:
         (
             "确认禁用这个账号？",
             "",
-            f"账号：{_mask_phone(account.phone_number)}",
+            f"账号：{_account_label(account)}",
             "禁用后不会继续监听该账号私聊，也不会使用它代发。",
             "历史中转记录保留。",
         )
@@ -146,7 +163,7 @@ def _delete_confirm_text(account) -> str:
         (
             "确认删除这个账号？",
             "",
-            f"账号：{_mask_phone(account.phone_number)}",
+            f"账号：{_account_label(account)}",
             "删除后会从账号管理列表移除；未完成登录的账号会直接清除。",
         )
     )

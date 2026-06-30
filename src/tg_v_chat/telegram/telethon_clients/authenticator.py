@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from tg_v_chat.services.auth import AuthChallenge, AuthFailure, PasswordRequired
+from tg_v_chat.services.auth import AuthChallenge, AuthFailure, AuthenticatedSession, PasswordRequired
 from tg_v_chat.telegram.telethon_clients.config import DeveloperAppConfig
 from tg_v_chat.telegram.telethon_clients.helpers import _run_async
 
@@ -55,7 +55,7 @@ class TelethonAuthenticator:
         await client.connect()
         try:
             await client.sign_in(challenge.phone_number, code, phone_code_hash=challenge.phone_code_hash)
-            return client.session.save()
+            return await _authenticated_session(client)
         except SessionPasswordNeededError:
             return PasswordRequired(client.session.save())
         except (PhoneCodeExpiredError, PhoneCodeHashEmptyError) as exc:
@@ -65,7 +65,7 @@ class TelethonAuthenticator:
         finally:
             await client.disconnect()
 
-    async def _sign_in_with_password(self, partial_session: str, password: str) -> str:
+    async def _sign_in_with_password(self, partial_session: str, password: str) -> AuthenticatedSession:
         from telethon import TelegramClient
         from telethon.errors import PasswordHashInvalidError
         from telethon.sessions import StringSession
@@ -74,8 +74,25 @@ class TelethonAuthenticator:
         await client.connect()
         try:
             await client.sign_in(password=password)
-            return client.session.save()
+            return await _authenticated_session(client)
         except PasswordHashInvalidError as exc:
             raise AuthFailure("二次密码不正确，请重新输入。") from exc
         finally:
             await client.disconnect()
+
+
+async def _authenticated_session(client) -> AuthenticatedSession:
+    me = await client.get_me()
+    return AuthenticatedSession(
+        client.session.save(),
+        _display_name(me),
+        getattr(me, "username", None),
+    )
+
+
+def _display_name(user) -> str | None:
+    if user is None:
+        return None
+    parts = [getattr(user, "first_name", None), getattr(user, "last_name", None)]
+    name = " ".join(part for part in parts if part)
+    return name or getattr(user, "username", None)

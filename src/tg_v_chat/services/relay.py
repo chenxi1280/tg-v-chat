@@ -110,7 +110,8 @@ class PrivateRelayService:
             self._push_relay(internal_user_id, telegram_user_id, relay)
 
     def _push_relay(self, internal_user_id: int, telegram_user_id: int, relay) -> None:
-        message = _message_from_relay(relay)
+        account = self._uow.accounts.get(relay.bound_tg_account_id)
+        message = _message_from_relay(relay, account)
         bot_message_id = self._bot.push_private_message(telegram_user_id, message)
         self._uow.pushes.create(relay.id, internal_user_id, bot_message_id)
         self._uow.mappings.create(bot_message_id, relay, internal_user_id)
@@ -179,7 +180,7 @@ def _peer_from_mapping(row) -> TelegramPeer:
     return TelegramPeer(id=row.peer_id, access_hash=row.peer_access_hash)
 
 
-def _message_from_relay(row) -> IncomingPrivateMessage:
+def _message_from_relay(row, account) -> IncomingPrivateMessage:
     from tg_v_chat.domain import MediaKind
 
     return IncomingPrivateMessage(
@@ -193,4 +194,6 @@ def _message_from_relay(row) -> IncomingPrivateMessage:
         sequence=row.sequence,
         sender_name=row.sender_name,
         sent_at=row.sent_at,
+        recipient_account_name=account.display_name,
+        recipient_username=account.username,
     )

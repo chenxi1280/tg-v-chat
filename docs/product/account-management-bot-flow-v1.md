@@ -46,7 +46,7 @@
 | `/start` 后回复管理账号 | `/start` 打开账号管理首页 | 文案标题为“账号管理”，展示账号数量与状态摘要 | Bot router 渲染 home view | BotCommand -> AccountManagementView | `/start` 返回首页和按钮 | covered |
 | 有按钮引导 | 全部关键操作使用 inline keyboard | 绑定 TG 账号、我的账号、授权状态、中转说明、帮助 | callback_data 路由到明确 action | BotCallback -> ActionHandler | 点击按钮进入对应步骤 | covered |
 | 绑定要管理的 TG 账号 | 绑定流程分步输入手机号、验证码、2FA | 每一步只问一个输入，并提供取消/返回首页 | AuthChallenge 持久化状态 | Phone -> Code -> Password -> SessionSlot | 手机号、验证码、2FA 成功和失败可测 | covered |
-| 管理已绑定账号 | 我的账号展示账号列表和状态 | 每个账号可查看详情、补授权、禁用、返回 | BoundTgAccount + TgSessionSlot 读取 | AccountList -> AccountDetail | 多账号、空列表、状态异常可测 | covered |
+| 管理已绑定账号 | 我的账号展示接收账号名、`@username` 和状态 | 每个账号可查看详情、补授权、禁用、返回；手机号只在详情中脱敏展示 | BoundTgAccount + TgSessionSlot 读取 | AccountList -> AccountDetail | 多账号、空列表、状态异常可测 | covered |
 | 错误要明确 | 不做沉默失败或假成功 | 错误消息保留在当前步骤并给出重试按钮 | service exception 映射为明确用户错误 | FailureEvent -> BotReply | 授权失败、超限、过期、取消可测 | covered |
 
 ## Scope
@@ -149,7 +149,7 @@ Account list message:
 ```text
 我的账号
 
-{index}. {phone_masked} - {status_label}
+{index}. {display_name}（@{username}） - {status_label}
 主授权：{primary_status}
 备用授权：{standby_summary}
 ```
@@ -160,9 +160,10 @@ Buttons:
 - `绑定 TG 账号`
 - `返回首页`
 
-Phone masking:
+Display identity:
 
-- `+8613812345678` displays as `+86138****5678`.
+- Account list and buttons prioritize接收账号名 and `@username`; users should not need to remember phone numbers.
+- `+8613812345678` displays in detail as `+86138****5678`.
 - Full phone may be stored, but the Bot UI should avoid full exposure after binding.
 
 ### Account Detail
@@ -172,7 +173,9 @@ Detail message:
 ```text
 账号详情
 
-账号：{phone_masked}
+接收账号：{display_name}
+用户名：@{username}
+手机号：{phone_masked}
 状态：{account_status}
 主授权：{primary_status}
 备用 1：{standby_1_status}
@@ -243,6 +246,7 @@ Help content must be operational:
   - `tg_v_chat.storage.repositories`: account list/detail/status reads and challenge lifecycle.
 - data_models:
   - existing: SystemUser, BoundTgAccount, TgSessionSlot, AuthChallenge.
+  - updated: BoundTgAccount stores `display_name` and `username` for account recognition.
   - added: BotConversationState for per-SystemUser wizard state.
 - migrations:
   - `0002_bot_conversation_states.py` adds `bot_conversation_states`.
@@ -277,7 +281,7 @@ Help content must be operational:
 6. User submits code.
 7. If 2FA is required, challenge moves to `awaiting_password`; otherwise encrypted primary session is persisted.
 8. User submits 2FA password when required.
-9. AuthService writes encrypted TgSessionSlot and marks BoundTgAccount active.
+9. AuthService writes encrypted TgSessionSlot, stores display name / username, and marks BoundTgAccount active.
 10. Bot renders success with account management navigation; account detail is available from `我的账号`.
 
 ### Account Management
@@ -285,7 +289,7 @@ Help content must be operational:
 1. User taps `我的账号`.
 2. Bot reads BoundTgAccount rows scoped to SystemUser.
 3. Bot reads TgSessionSlot status for each account.
-4. Bot renders list and account detail actions.
+4. Bot renders list with display name / username and account detail actions.
 5. Disable/reauth actions write only after explicit user confirmation or valid auth completion.
 
 ## QA Acceptance

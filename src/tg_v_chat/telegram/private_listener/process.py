@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from tg_v_chat.crypto import SessionCipher
 from tg_v_chat.domain import DeveloperSlot, IncomingPrivateMessage, SessionStatus
@@ -20,6 +20,8 @@ class BoundListenerSession:
     account_id: int
     system_user_id: int
     phone_number: str
+    display_name: str | None
+    username: str | None
     developer_slot: str
     session_string: str
 
@@ -82,6 +84,7 @@ class TelethonPrivateListenerProcess:
         if not await client.is_user_authorized():
             await client.disconnect()
             raise RuntimeError(f"TG 账号未授权，无法监听: {binding.phone_number}")
+        binding = await _sync_bound_account_identity(client, binding, self._session_factory)
         client.add_event_handler(
             _incoming_handler(binding, self._session_factory, bot_gateway),
             private_message_event_builder(),
@@ -138,6 +141,8 @@ def _binding_from_account(account, uow, cipher: SessionCipher) -> BoundListenerS
         account_id=account.id,
         system_user_id=account.system_user_id,
         phone_number=account.phone_number,
+        display_name=account.display_name,
+        username=account.username,
         developer_slot=slot.developer_slot,
         session_string=cipher.decrypt(slot.encrypted_session),
     )
@@ -148,6 +153,28 @@ def _active_slot(slots) -> object | None:
         if slot.status == SessionStatus.ACTIVE.value:
             return slot
     return None
+
+
+async def _sync_bound_account_identity(client, binding: BoundListenerSession, session_factory):
+    profile = _profile_from_user(await client.get_me())
+    if profile == (binding.display_name, binding.username):
+        return binding
+    with UnitOfWork(session_factory) as uow:
+        uow.accounts.update_profile(
+            binding.account_id,
+            display_name=profile[0],
+            username=profile[1],
+        )
+        uow.commit()
+    return replace(binding, display_name=profile[0], username=profile[1])
+
+
+def _profile_from_user(user) -> tuple[str | None, str | None]:
+    if user is None:
+        return None, None
+    parts = [getattr(user, "first_name", None), getattr(user, "last_name", None)]
+    display_name = " ".join(part for part in parts if part) or getattr(user, "username", None)
+    return display_name, getattr(user, "username", None)
 
 
 def _bot_sender(loop, bot_client) -> Callable[[int, IncomingPrivateMessage], int]:

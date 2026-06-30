@@ -21,12 +21,12 @@
 | Account management Bot flow | `src/tg_v_chat/bot/account_management/` (package) | dev | Renders Account Management home/list/detail/status/help, tracks bind wizard steps, and routes phone/code/2FA inputs; re-exports `AccountManagementService` from `__init__.py` so external import paths stay unchanged |
 | Bot reply handling | `src/tg_v_chat/bot/handlers.py` | dev | Converts Bot reply commands into relay service calls; non-reply is explicit failure in service |
 | Telegram adapters | `src/tg_v_chat/telegram/telethon_clients/` (package) | dev | Telethon bot process, inline callback handling, real user-session authenticator, gateway/sender ports; disconnected adapters raise explicit errors; `__init__.py` re-exports all public symbols |
-| Telegram private listener | `src/tg_v_chat/telegram/private_listener/` (package) | dev | Bound listener session and private-message event parsing/formatting; `__init__.py` re-exports `BoundListenerSession`, `TelethonPrivateListenerProcess`, and event helpers |
+| Telegram private listener | `src/tg_v_chat/telegram/private_listener/` (package) | dev | Bound listener session identity, private-message event parsing, and push formatting; `__init__.py` re-exports `BoundListenerSession`, `TelethonPrivateListenerProcess`, and event helpers |
 | Worker runner | `src/tg_v_chat/workers/runner.py` | dev | Real worker loop entrypoint; raises when no workers are configured |
 | Runtime healthcheck | `src/tg_v_chat/healthcheck.py` | dev | Validates required env and PostgreSQL connectivity |
 | Runtime process | `src/tg_v_chat/runtime.py` | dev | Role-based bot/listener/worker process entrypoint |
 | Storage bootstrap | `src/tg_v_chat/storage/database.py` | dev | SQLAlchemy engine/session factory; runtime requires PostgreSQL unless tests opt in to SQLite |
-| Migrations | `migrations/versions/0001_initial_private_relay.py` ... `migrations/versions/0007_scope_bot_message_ids.py` | dev | Alembic schema migrations; production must not rely on `Base.metadata.create_all` |
+| Migrations | `migrations/versions/0001_initial_private_relay.py` ... `migrations/versions/0008_account_display_identity.py` | dev | Alembic schema migrations; production must not rely on `Base.metadata.create_all` |
 | CI release workflow | `.github/workflows/deploy-production.yml` | dev | release branch and manual trigger; PostgreSQL service, Alembic migration, pytest, GHCR image, SSH compose deploy |
 | Server compose | `docker-compose.server.yml` | dev | Uses infra-compose PostgreSQL via `infra_default`; defines migrate, bot, listener, worker services |
 
@@ -124,7 +124,7 @@ Single-file modules that exceeded the maintainability threshold were split into 
 | model | table | notes |
 | --- | --- | --- |
 | SystemUser | `system_users` | Bot user identity |
-| BoundTgAccount | `bound_tg_accounts` | Max 20 per SystemUser |
+| BoundTgAccount | `bound_tg_accounts` | Max 20 per SystemUser; stores phone_number plus display_name and username for relay/account identification |
 | TgSessionSlot | `tg_session_slots` | primary/standby_1/standby_2, encrypted session nullable until authorized |
 | AuthChallenge | `auth_challenges` | phone code and optional 2FA flow state |
 | BotConversationState | `bot_conversation_states` | one active phone/code/password wizard state per SystemUser |
@@ -150,6 +150,7 @@ Single-file modules that exceeded the maintainability threshold were split into 
 - Phone code plus 2FA binding persists encrypted primary session and creates three session slots.
 - The 21st account for one SystemUser is rejected explicitly.
 - Incoming private message idempotency prevents duplicate Bot pushes.
+- Bot pushes show sender,接收账号名,接收用户名, time, and content so multi-account inboxes are distinguishable.
 - ReplyMapping is required for outbound relay; non-reply input fails explicitly.
 - ReplyMapping and outgoing idempotency records are scoped to `system_user_id`; cross-user replay is rejected before sender invocation.
 - Bot message IDs are scoped per SystemUser, matching Telegram chat-local `message_id` semantics.
@@ -159,7 +160,7 @@ Single-file modules that exceeded the maintainability threshold were split into 
 - Media groups defer pushes until the sequence anchor arrives, then flush pending relays by sequence.
 - Bot `/start` and `/admin` now return the Account Management home with inline keyboard navigation.
 - `runtime --role bot` starts a real Telethon Bot process instead of building dependencies and sleeping.
-- Account Management Bot Flow PRD is complete and E3-tested for `/start`, `/admin`, bind button, phone/code/2FA wizard, account list, account detail, disable confirmation, callback handling, and reply passthrough.
+- Account Management Bot Flow PRD is complete and E3-tested for `/start`, `/admin`, bind button, phone/code/2FA wizard, account identity display, account detail, disable confirmation, callback handling, and reply passthrough.
 - Module split (2026-06-29): `storage/repositories.py`, `bot/account_management.py`, `telegram/telethon_clients.py`, and `telegram/private_listener.py` were split into subpackages; `tests/test_account_management_bot_flow.py` was split into 4 scenario files plus shared helpers. All external import paths are preserved via `__init__.py` re-exports; largest file is now 274 lines (`service.py`), well under the 500-line cap. `pytest` (53 passed) and `compileall` both green.
 
 ## Known Limits Before Production

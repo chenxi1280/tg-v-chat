@@ -11,7 +11,7 @@ from tg_v_chat.domain import (
     SessionFailure,
     SessionStatus,
 )
-from tg_v_chat.services.auth import AuthChallenge, AuthService, AuthStep, PasswordRequired
+from tg_v_chat.services.auth import AuthChallenge, AuthService, AuthStep, AuthenticatedSession, PasswordRequired
 from tg_v_chat.services.relay import PrivateRelayService
 from tg_v_chat.storage.database import create_session_factory, init_db
 from tg_v_chat.storage.models import RelayMessageModel
@@ -30,12 +30,12 @@ class FakeAuthenticator:
     def complete_code(self, challenge, code):
         self.code_challenge_pending_session = challenge.pending_session
         if self.needs_password:
-            return AuthStep.PASSWORD_REQUIRED
-        return "session-string"
+            return PasswordRequired("partial-session-after-code")
+        return AuthenticatedSession("session-string", "小号A", "example_user")
 
     def complete_password(self, challenge, password):
         self.password_checked = True
-        return "session-string-2fa"
+        return AuthenticatedSession("session-string-2fa", "小号A", "example_user")
 
 
 class PasswordRequiredAuthenticator(FakeAuthenticator):
@@ -49,7 +49,7 @@ class PasswordRequiredAuthenticator(FakeAuthenticator):
 
     def complete_password(self, challenge, password):
         self.password_challenge_pending_session = challenge.pending_session
-        return "session-string-2fa"
+        return AuthenticatedSession("session-string-2fa", "小号A", "example_user")
 
 
 class FakeBotGateway:
@@ -140,6 +140,21 @@ def test_relay_persists_display_metadata(uow):
     assert row.sender_name == "洋芋"
     assert row.sent_at.replace(tzinfo=timezone.utc) == sent_at
     assert pushed.peer_id == 88
+
+
+def test_relay_pushes_recipient_account_name_and_username(uow):
+    account = create_active_account(uow, system_user_id=7_677_366_761)
+    uow.accounts.update_profile(account.id, display_name="小号A", username="example_user")
+    bot = FakeBotGateway()
+    relay = PrivateRelayService(uow, bot, FakeSenderPool())
+
+    relay.receive_private_message(
+        IncomingPrivateMessage(account.id, 88, 103, MediaKind.TEXT, "hello", None, 0)
+    )
+
+    pushed = bot.pushes[0][1]
+    assert pushed.recipient_account_name == "小号A"
+    assert pushed.recipient_username == "example_user"
 
 
 def test_binding_rejects_twenty_first_account(uow):

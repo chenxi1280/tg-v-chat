@@ -50,6 +50,8 @@ class IncomingPrivateMessage:
     peer_access_hash: int | None = None
     sender_name: str | None = None
     sent_at: datetime | None = None
+    recipient_account_name: str | None = None
+    recipient_username: str | None = None
 
 
 @dataclass(frozen=True)

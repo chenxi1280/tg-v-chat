@@ -47,7 +47,7 @@
 | user_requirement | product_decision | functional_design | backend_design | dataflow_design | qa_acceptance | status |
 | --- | --- | --- | --- | --- | --- | --- |
 | 绑定多个 TG 账号 | 每个系统用户最多 20 个 Telegram 个人账号 | Bot 内完成绑定和列表管理 | 绑定账号、session 槽位、授权状态持久化 | SystemUser -> BoundTgAccount -> TgSessionSlot | 可绑定、查看、禁用，超过 20 个拒绝 | covered |
-| 私聊通过 Bot 推送 | V1 只支持私聊，不支持群/频道 | 收到私聊后推送给绑定用户 | user session 监听私聊事件 | IncomingPrivateMessage -> RelayMessage -> BotPushMessage | 文本、图片、emoji、sticker 均能推送 | covered |
+| 私聊通过 Bot 推送 | V1 只支持私聊，不支持群/频道 | 推送内容显示发送人、接收账号名、接收用户名、时间和内容 | user session 监听私聊事件，绑定账号身份从 BoundTgAccount 补齐 | IncomingPrivateMessage -> RelayMessage -> BoundTgAccount -> BotPushMessage | 文本、图片、emoji、sticker 均能推送，且能分清发给哪个绑定账号 | covered |
 | 回复哪条就回哪条 | 以 Bot reply_to_message 反查原始私聊 | 用户必须 reply Bot 推送消息 | ReplyMapping 保存 bot_message_id 到原私聊上下文 | BotReply -> ReplyMapping -> Telegram send | 错误回复方式给出明确失败提示 | covered |
 | 图片、表情、文字 | 支持文字、普通 emoji、图片、Telegram sticker | 图片相册保留顺序 | media_group_id 和 sequence 记录顺序 | MediaGroup ordered relay | 相册顺序一致，sticker 可回传 | covered |
 | 1 主 2 从 session | 所有绑定账号共享三套 developer app；每账号三 session 槽 | primary 失败自动切 standby | SessionSelector 选择 healthy slot | SessionHealth -> failover event -> send | primary 失败自动切换并记录事件 | covered |
@@ -83,7 +83,7 @@
 | --- | --- | --- |
 | SystemUser | active, disabled | 使用本产品 Bot 的用户。 |
 | DeveloperAppSlot | primary, standby_1, standby_2 | 全局三套 Telegram developer app 配置。 |
-| BoundTgAccount | binding, active, degraded, reauth_required, disabled | 用户绑定的 Telegram 个人账号。 |
+| BoundTgAccount | binding, active, degraded, reauth_required, disabled | 用户绑定的 Telegram 个人账号；保存接收账号名和 Telegram `@username` 作为日常识别信息。 |
 | TgSessionSlot | active, standby, failed, expired, revoked | 每个绑定账号在某个 DeveloperAppSlot 下的 session。 |
 | BotConversationState | awaiting_phone, awaiting_code, awaiting_password | Bot 内账号绑定向导的用户级状态。 |
 | PrivateChatPeer | known, blocked, unavailable | 原私聊对象。 |
@@ -96,7 +96,7 @@
 
 - Bot 提供绑定入口、账号列表、解绑/禁用入口、授权状态查看入口。
 - 绑定流程按手机号、验证码、2FA 密码分步推进。
-- 收到私聊后，Bot 推送内容必须包含绑定账号标识、私聊对象标识、消息内容和媒体。
+- 收到私聊后，Bot 推送内容必须包含发送人、接收账号名、接收账号 `@username`、时间、消息内容和媒体。
 - 用户回复必须使用 Telegram reply 操作；非 reply 输入不进入代发链路。
 - 发送时优先使用 primary session；失败后按 standby_1、standby_2 顺序自动尝试。
 - 自动切换只针对 session 不可用、授权失效、连接失败等 session 层失败；业务拒绝或 peer 不可达不伪装为 session failover 成功。
@@ -115,7 +115,7 @@
 ### Incoming Private Message
 
 1. TgSessionSlot listener receives private message.
-2. Resolve BoundTgAccount, PrivateChatPeer, source_message_id, media_group_id, and sequence.
+2. Resolve BoundTgAccount, PrivateChatPeer, source_message_id, media_group_id, sequence, account display name, and username.
 3. Write RelayMessage and media metadata.
 4. Send BotPushMessage to SystemUser.
 5. Write ReplyMapping from system_user_id + bot_message_id to relay context.
@@ -153,6 +153,7 @@
 - Bind one account requiring 2FA password.
 - Reject binding the 21st account for one SystemUser.
 - Receive private text and emoji, then reply through Bot and confirm original peer receives it.
+- Receive private text and verify Bot push shows接收账号名 and接收用户名 instead of relying on phone number.
 - Receive private image and image album; verify album order is preserved.
 - Receive and reply Telegram sticker.
 - Simulate primary session failure and verify standby_1 is used with SessionFailoverEvent.

@@ -4,16 +4,26 @@ import pytest
 from tg_v_chat.bot.account_management import AccountManagementService
 from tg_v_chat.bot.router import BotCallback, BotIncomingMessage, BotUpdateRouter
 from tg_v_chat.crypto import SessionCipher
-from tg_v_chat.services.auth import AuthChallenge, AuthFailure, AuthStep
+from tg_v_chat.services.auth import AuthChallenge, AuthFailure, AuthenticatedSession, PasswordRequired
 from tg_v_chat.storage.database import create_session_factory, init_db
 from tg_v_chat.storage.repositories import UnitOfWork
 
 
 class FakeAuthenticator:
-    def __init__(self, *, needs_password=False, code_failure=None, password_failure=None):
+    def __init__(
+        self,
+        *,
+        needs_password=False,
+        code_failure=None,
+        password_failure=None,
+        display_name="小号A",
+        username="example_user",
+    ):
         self.needs_password = needs_password
         self.code_failure = code_failure
         self.password_failure = password_failure
+        self.display_name = display_name
+        self.username = username
         self.started = []
         self.codes = []
         self.passwords = []
@@ -27,14 +37,14 @@ class FakeAuthenticator:
             raise self.code_failure
         self.codes.append(code)
         if self.needs_password:
-            return AuthStep.PASSWORD_REQUIRED
-        return "session-string"
+            return PasswordRequired("partial-session")
+        return AuthenticatedSession("session-string", self.display_name, self.username)
 
     def complete_password(self, challenge, password):
         if self.password_failure is not None:
             raise self.password_failure
         self.passwords.append(password)
-        return "session-string-2fa"
+        return AuthenticatedSession("session-string-2fa", self.display_name, self.username)
 
 
 class RetryPasswordAuthenticator(FakeAuthenticator):
@@ -45,7 +55,7 @@ class RetryPasswordAuthenticator(FakeAuthenticator):
         self.passwords.append(password)
         if len(self.passwords) == 1:
             raise AuthFailure("二次密码不正确，请重新输入。")
-        return "session-string-2fa"
+        return AuthenticatedSession("session-string-2fa", self.display_name, self.username)
 
 
 @pytest.fixture()
