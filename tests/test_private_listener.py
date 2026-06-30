@@ -1,8 +1,10 @@
 import asyncio
+import sys
 from datetime import datetime, timezone
+from types import ModuleType
 from types import SimpleNamespace
 
-from tg_v_chat.domain import MediaKind
+from tg_v_chat.domain import DeveloperSlot, MediaKind
 from tg_v_chat.storage.database import create_session_factory, init_db
 from tg_v_chat.storage.repositories import UnitOfWork
 from tg_v_chat.telegram.private_listener import (
@@ -13,6 +15,8 @@ from tg_v_chat.telegram.private_listener import (
     private_message_from_event,
 )
 from tg_v_chat.telegram.private_listener.process import _sync_bound_account_identity
+from tg_v_chat.telegram.private_listener.process import TelethonPrivateListenerProcess
+from tg_v_chat.telegram.telethon_clients.config import DeveloperAppConfig
 
 
 def test_private_text_event_is_converted_to_relay_message():
@@ -153,6 +157,52 @@ def test_listener_syncs_existing_account_identity_from_session_user():
         account = uow.accounts.get(1)
         assert account.display_name == "接收 账号"
         assert account.username == "receiver_user"
+
+
+def test_listener_registers_handler_when_identity_sync_fails(monkeypatch):
+    class FakeClient:
+        def __init__(self, _session, _api_id, _api_hash):
+            self.handlers = []
+
+        async def connect(self):
+            return None
+
+        async def is_user_authorized(self):
+            return True
+
+        async def get_me(self):
+            raise RuntimeError("profile query failed")
+
+        def add_event_handler(self, handler, builder):
+            self.handlers.append((handler, builder))
+
+    telethon = ModuleType("telethon")
+    telethon.TelegramClient = FakeClient
+    telethon.events = SimpleNamespace(NewMessage=lambda: "new-message-builder")
+    sessions = ModuleType("telethon.sessions")
+    sessions.StringSession = lambda value=None: value
+    monkeypatch.setitem(sys.modules, "telethon", telethon)
+    monkeypatch.setitem(sys.modules, "telethon.sessions", sessions)
+
+    process = TelethonPrivateListenerProcess(
+        {DeveloperSlot.PRIMARY: DeveloperAppConfig(1, "hash")},
+        "bot-token",
+        object(),
+        session_cipher=object(),
+    )
+    binding = BoundListenerSession(
+        account_id=7,
+        system_user_id=42,
+        phone_number="+19525920433",
+        display_name=None,
+        username=None,
+        developer_slot="primary",
+        session_string="session",
+    )
+
+    client = asyncio.run(process._start_user_client(binding, object()))
+
+    assert len(client.handlers) == 1
 
 
 def test_push_message_display_shows_sender_recipient_username_content_and_time():

@@ -84,11 +84,11 @@ class TelethonPrivateListenerProcess:
         if not await client.is_user_authorized():
             await client.disconnect()
             raise RuntimeError(f"TG 账号未授权，无法监听: {binding.phone_number}")
-        binding = await _sync_bound_account_identity(client, binding, self._session_factory)
         client.add_event_handler(
             _incoming_handler(binding, self._session_factory, bot_gateway),
             private_message_event_builder(),
         )
+        _schedule_bound_account_identity_sync(client, binding, self._session_factory)
         print(f"tg-v-chat listener connected account {binding.account_id} {binding.developer_slot}")
         return client
 
@@ -175,6 +175,16 @@ def _profile_from_user(user) -> tuple[str | None, str | None]:
     parts = [getattr(user, "first_name", None), getattr(user, "last_name", None)]
     display_name = " ".join(part for part in parts if part) or getattr(user, "username", None)
     return display_name, getattr(user, "username", None)
+
+
+def _schedule_bound_account_identity_sync(client, binding: BoundListenerSession, session_factory) -> None:
+    async def sync() -> None:
+        try:
+            await _sync_bound_account_identity(client, binding, session_factory)
+        except Exception as exc:
+            print(f"tg-v-chat listener identity sync failed for account {binding.account_id}: {exc}")
+
+    asyncio.create_task(sync())
 
 
 def _bot_sender(loop, bot_client) -> Callable[[int, IncomingPrivateMessage], int]:
