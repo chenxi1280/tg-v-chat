@@ -254,3 +254,44 @@ def test_push_message_display_shows_sender_recipient_username_content_and_time()
     assert "来源 ID" not in formatted
     assert "消息 ID" not in formatted
     assert "类型" not in formatted
+
+
+def test_push_message_marks_telegram_official_login_code():
+    message = private_message_from_event(
+        BoundListenerSession(
+            account_id=7,
+            system_user_id=42,
+            phone_number="+19525920433",
+            display_name="小号A",
+            username="example_user",
+            developer_slot="primary",
+            session_string="session",
+        ),
+        SimpleNamespace(
+            chat_id=777000,
+            sender_id=777000,
+            raw_text="Login code: 365435. Do not give this code to anyone.",
+            input_chat=SimpleNamespace(access_hash=987654321),
+            input_sender=None,
+            message=SimpleNamespace(
+                id=77,
+                date=datetime(2026, 7, 1, 8, 30, tzinfo=timezone.utc),
+                grouped_id=None,
+                photo=None,
+                sticker=None,
+            ),
+        ),
+    )
+    message = message.__class__(
+        **{
+            **message.__dict__,
+            "sender_name": "Telegram",
+            "sent_at": datetime(2026, 7, 1, 8, 30, tzinfo=timezone.utc),
+        }
+    )
+
+    formatted = _format_push_message(message)
+
+    assert formatted.splitlines()[0] == "官方登录信息：Telegram"
+    assert "Login code: 365435" in formatted
+    assert "接收账号：小号A" in formatted
