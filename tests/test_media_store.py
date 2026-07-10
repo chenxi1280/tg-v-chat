@@ -122,9 +122,12 @@ def test_media_store_release_policy_and_part_cleanup(tmp_path):
 def test_compose_mounts_named_media_volume_for_runtime_roles():
     compose = Path("docker-compose.server.yml").read_text()
     target = "/var/lib/tg-v-chat/media"
+    heartbeat_root = "/var/run/tg-v-chat"
 
     assert "tg-v-chat-media:" in compose
     assert compose.count("source: tg-v-chat-media") == 3
-    assert compose.count("target: ${TG_V_CHAT_MEDIA_ROOT:?TG_V_CHAT_MEDIA_ROOT is required}") == 3
+    assert compose.count(f"target: ${{TG_V_CHAT_MEDIA_ROOT:-{target}}}") == 3
+    assert f"TG_V_CHAT_MEDIA_ROOT: ${{TG_V_CHAT_MEDIA_ROOT:-{target}}}" in compose
+    assert f"TG_V_CHAT_HEARTBEAT_ROOT: ${{TG_V_CHAT_HEARTBEAT_ROOT:-{heartbeat_root}}}" in compose
     assert os.path.isabs(target)
     assert f"TG_V_CHAT_MEDIA_ROOT={target}" in Path(".env.example").read_text()

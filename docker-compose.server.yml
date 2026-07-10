@@ -12,8 +12,8 @@ x-app-env: &app-env
   TG_V_CHAT_STANDBY_1_API_HASH: ${TG_V_CHAT_STANDBY_1_API_HASH:?TG_V_CHAT_STANDBY_1_API_HASH is required}
   TG_V_CHAT_STANDBY_2_API_ID: ${TG_V_CHAT_STANDBY_2_API_ID:?TG_V_CHAT_STANDBY_2_API_ID is required}
   TG_V_CHAT_STANDBY_2_API_HASH: ${TG_V_CHAT_STANDBY_2_API_HASH:?TG_V_CHAT_STANDBY_2_API_HASH is required}
-  TG_V_CHAT_MEDIA_ROOT: ${TG_V_CHAT_MEDIA_ROOT:?TG_V_CHAT_MEDIA_ROOT is required}
-  TG_V_CHAT_HEARTBEAT_ROOT: ${TG_V_CHAT_HEARTBEAT_ROOT:?TG_V_CHAT_HEARTBEAT_ROOT is required}
+  TG_V_CHAT_MEDIA_ROOT: ${TG_V_CHAT_MEDIA_ROOT:-/var/lib/tg-v-chat/media}
+  TG_V_CHAT_HEARTBEAT_ROOT: ${TG_V_CHAT_HEARTBEAT_ROOT:-/var/run/tg-v-chat}
 
 x-healthcheck: &app-healthcheck
   interval: 20s
@@ -42,7 +42,7 @@ services:
     volumes:
       - type: volume
         source: tg-v-chat-media
-        target: ${TG_V_CHAT_MEDIA_ROOT:?TG_V_CHAT_MEDIA_ROOT is required}
+        target: ${TG_V_CHAT_MEDIA_ROOT:-/var/lib/tg-v-chat/media}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -62,7 +62,7 @@ services:
     volumes:
       - type: volume
         source: tg-v-chat-media
-        target: ${TG_V_CHAT_MEDIA_ROOT:?TG_V_CHAT_MEDIA_ROOT is required}
+        target: ${TG_V_CHAT_MEDIA_ROOT:-/var/lib/tg-v-chat/media}
     depends_on:
       migrate:
         condition: service_completed_successfully
@@ -82,7 +82,7 @@ services:
     volumes:
       - type: volume
         source: tg-v-chat-media
-        target: ${TG_V_CHAT_MEDIA_ROOT:?TG_V_CHAT_MEDIA_ROOT is required}
+        target: ${TG_V_CHAT_MEDIA_ROOT:-/var/lib/tg-v-chat/media}
     depends_on:
       migrate:
         condition: service_completed_successfully
