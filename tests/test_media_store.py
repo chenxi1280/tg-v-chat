@@ -125,9 +125,19 @@ def test_compose_mounts_named_media_volume_for_runtime_roles():
     heartbeat_root = "/var/run/tg-v-chat"
 
     assert "tg-v-chat-media:" in compose
-    assert compose.count("source: tg-v-chat-media") == 3
-    assert compose.count(f"target: ${{TG_V_CHAT_MEDIA_ROOT:-{target}}}") == 3
+    assert compose.count("source: tg-v-chat-media") == 4
+    assert compose.count(f"target: ${{TG_V_CHAT_MEDIA_ROOT:-{target}}}") == 4
     assert f"TG_V_CHAT_MEDIA_ROOT: ${{TG_V_CHAT_MEDIA_ROOT:-{target}}}" in compose
     assert f"TG_V_CHAT_HEARTBEAT_ROOT: ${{TG_V_CHAT_HEARTBEAT_ROOT:-{heartbeat_root}}}" in compose
     assert os.path.isabs(target)
     assert f"TG_V_CHAT_MEDIA_ROOT={target}" in Path(".env.example").read_text()
+
+
+def test_compose_initializes_media_volume_before_non_root_runtime_roles():
+    compose = Path("docker-compose.server.yml").read_text()
+
+    assert "  media-init:" in compose
+    assert 'user: "0"' in compose
+    assert "chown appuser:appuser" in compose
+    assert compose.count("source: tg-v-chat-media") == 4
+    assert compose.count("media-init:\n        condition: service_completed_successfully") == 3

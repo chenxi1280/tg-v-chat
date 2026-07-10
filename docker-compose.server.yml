@@ -32,6 +32,21 @@ services:
     networks:
       - infra_default
 
+  media-init:
+    image: ${TG_V_CHAT_IMAGE:?TG_V_CHAT_IMAGE is required}
+    container_name: tg-v-chat-media-init
+    restart: "no"
+    user: "0"
+    command: ["sh", "-ec", "chown appuser:appuser \"$$TG_V_CHAT_MEDIA_ROOT\" && chmod 0700 \"$$TG_V_CHAT_MEDIA_ROOT\""]
+    environment:
+      <<: *app-env
+    volumes:
+      - type: volume
+        source: tg-v-chat-media
+        target: ${TG_V_CHAT_MEDIA_ROOT:-/var/lib/tg-v-chat/media}
+    networks:
+      - infra_default
+
   bot:
     image: ${TG_V_CHAT_IMAGE:?TG_V_CHAT_IMAGE is required}
     container_name: tg-v-chat-bot
@@ -45,6 +60,8 @@ services:
         target: ${TG_V_CHAT_MEDIA_ROOT:-/var/lib/tg-v-chat/media}
     depends_on:
       migrate:
+        condition: service_completed_successfully
+      media-init:
         condition: service_completed_successfully
     healthcheck:
       <<: *app-healthcheck
@@ -66,6 +83,8 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+      media-init:
+        condition: service_completed_successfully
     healthcheck:
       <<: *app-healthcheck
       test: ["CMD", "python", "-m", "tg_v_chat.healthcheck", "--role", "listener"]
@@ -85,6 +104,8 @@ services:
         target: ${TG_V_CHAT_MEDIA_ROOT:-/var/lib/tg-v-chat/media}
     depends_on:
       migrate:
+        condition: service_completed_successfully
+      media-init:
         condition: service_completed_successfully
     healthcheck:
       <<: *app-healthcheck
