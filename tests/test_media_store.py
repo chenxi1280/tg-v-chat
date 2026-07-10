@@ -141,3 +141,9 @@ def test_compose_initializes_media_volume_before_non_root_runtime_roles():
     assert "chown appuser:appuser" in compose
     assert compose.count("source: tg-v-chat-media") == 4
     assert compose.count("media-init:\n        condition: service_completed_successfully") == 3
+
+
+def test_runtime_image_prepares_heartbeat_directory_for_appuser():
+    dockerfile = Path("Dockerfile").read_text()
+
+    assert "install -d -o appuser -g appuser -m 700 /var/run/tg-v-chat" in dockerfile

@@ -5,7 +5,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-RUN adduser --disabled-password --gecos "" appuser
+RUN adduser --disabled-password --gecos "" appuser \
+    && install -d -o appuser -g appuser -m 700 /var/run/tg-v-chat
 
 COPY pyproject.toml alembic.ini ./
 COPY migrations ./migrations

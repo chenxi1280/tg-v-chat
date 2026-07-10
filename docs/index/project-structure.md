@@ -32,6 +32,7 @@
 | Migrations | `migrations/versions/0001_initial_private_relay.py` ... `migrations/versions/0009_relay_runtime_hardening.py` | dev | Alembic schema migrations; production must not rely on `Base.metadata.create_all` |
 | CI release workflow | `.github/workflows/deploy-production.yml` | dev | release branch and manual trigger; PostgreSQL service, Alembic migration, pytest, GHCR image, SSH compose deploy |
 | Server compose | `docker-compose.server.yml` | dev | Uses infra-compose PostgreSQL via `infra_default`; defines migrate, root-only media-volume initialization, bot, listener, worker services, shared media volume, and role healthchecks |
+| Container image | `Dockerfile` | dev | Installs the application and creates the appuser-owned `0700` role-heartbeat directory before dropping privileges |
 
 ## Account Management Bot Flow
 
