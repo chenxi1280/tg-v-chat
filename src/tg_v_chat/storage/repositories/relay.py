@@ -1,12 +1,12 @@
 from __future__ import annotations
 
-from tg_v_chat.domain import DeveloperSlot, IncomingPrivateMessage
+from tg_v_chat.domain import IncomingPrivateMessage
 from tg_v_chat.storage.models import (
-    BotPushMessageModel,
-    OutgoingReplyModel,
     RelayMessageModel,
     ReplyMappingModel,
+    utc_now,
 )
+from tg_v_chat.storage.repositories.dispatch import OutgoingReplyRepository, PushRepository
 
 
 def _relay_values(message: IncomingPrivateMessage) -> dict:
@@ -56,24 +56,6 @@ class RelayRepository:
         return row is not None
 
 
-class PushRepository:
-    def __init__(self, session):
-        self._session = session
-
-    def create(self, relay_id: int, system_user_id: int, bot_message_id: int) -> BotPushMessageModel:
-        model = BotPushMessageModel(
-            relay_message_id=relay_id,
-            system_user_id=system_user_id,
-            bot_message_id=bot_message_id,
-        )
-        self._session.add(model)
-        self._session.flush()
-        return model
-
-    def get_by_relay(self, relay_id: int) -> BotPushMessageModel | None:
-        return self._session.query(BotPushMessageModel).filter_by(relay_message_id=relay_id).one_or_none()
-
-
 class MappingRepository:
     def __init__(self, session):
         self._session = session
@@ -100,34 +82,15 @@ class MappingRepository:
             .one_or_none()
         )
 
-
-class OutgoingReplyRepository:
-    def __init__(self, session):
-        self._session = session
-
-    def create(
-        self,
-        reply_id: int,
-        *,
-        system_user_id: int,
-        relay_id: int,
-        sent_id: int,
-        slot: DeveloperSlot,
-    ) -> OutgoingReplyModel:
-        model = OutgoingReplyModel(
-            bot_reply_message_id=reply_id,
-            system_user_id=system_user_id,
-            relay_message_id=relay_id,
-            sent_message_id=sent_id,
-            developer_slot=slot.value,
+    def invalidate_for_account(self, account_id: int) -> int:
+        invalidated_at = utc_now()
+        active_mappings = (
+            self._session.query(ReplyMappingModel)
+            .filter_by(bound_tg_account_id=account_id, status="active")
+            .all()
         )
-        self._session.add(model)
+        for mapping in active_mappings:
+            mapping.status = "expired"
+            mapping.invalidated_at = invalidated_at
         self._session.flush()
-        return model
-
-    def get_by_reply(self, system_user_id: int, reply_id: int) -> OutgoingReplyModel | None:
-        return (
-            self._session.query(OutgoingReplyModel)
-            .filter_by(system_user_id=system_user_id, bot_reply_message_id=reply_id)
-            .one_or_none()
-        )
+        return len(active_mappings)

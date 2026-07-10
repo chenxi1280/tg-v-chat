@@ -10,7 +10,7 @@ from tg_v_chat.bot.account_management.constants import (
     STATE_AWAITING_PASSWORD,
     STATE_AWAITING_PHONE,
 )
-from tg_v_chat.bot.account_management.parsing import _parse_id, _require_challenge
+from tg_v_chat.bot.account_management.parsing import _parse_id, _require_challenge, parse_slot_action
 from tg_v_chat.bot.account_management.rendering import (
     _account_list_buttons,
     _accounts_text,
@@ -33,15 +33,17 @@ from tg_v_chat.bot.account_management.state_helpers import (
     _cancel_abandoned_bindings,
     _cancel_challenge_if_needed,
     _delete_account_for_user,
-    _delete_incomplete_account,
     _resume_pending_password_binding,
 )
 from tg_v_chat.bot.code_keypad import parse_code_action, require_code_state
 from tg_v_chat.bot.router import BotResponse
 from tg_v_chat.crypto import SessionCipher
 from tg_v_chat.domain import DeveloperSlot, MAX_BOUND_ACCOUNTS
-from tg_v_chat.services.auth import AuthFailure, AuthService, AuthStep, TelegramAuthenticator
+from tg_v_chat.services.auth import AuthFailure, AuthPurpose, AuthService, AuthStep, TelegramAuthenticator
 from tg_v_chat.storage.repositories import UnitOfWork
+
+
+ACCOUNT_STATUS_DELETED = "deleted"
 
 
 class AccountManagementService:
@@ -76,6 +78,8 @@ class AccountManagementService:
         }
         if data.startswith("account.detail:"):
             return self.detail(telegram_user_id, _parse_id(data))
+        if data.startswith(("account.slot.bind:", "account.slot.reauth:")):
+            return self.authorize_slot(telegram_user_id, parse_slot_action(data))
         if data.startswith("account.code."):
             return self.handle_code_callback(telegram_user_id, data)
         if data.startswith("account.relogin:"):
@@ -143,7 +147,7 @@ class AccountManagementService:
             user = uow.users.get_or_create(telegram_user_id)
             account = uow.accounts.get_for_user(account_id, user.id)
             sessions = uow.sessions.list_for_account(account.id)
-            return BotResponse(_detail_text(account, sessions), buttons=_detail_buttons(account))
+            return BotResponse(_detail_text(account, sessions), buttons=_detail_buttons(account, sessions))
 
     def disable_confirm(self, telegram_user_id: int, account_id: int) -> BotResponse:
         with UnitOfWork(self._session_factory) as uow:
@@ -152,12 +156,19 @@ class AccountManagementService:
             return BotResponse(_disable_confirm_text(account), buttons=_disable_confirm_buttons(account.id))
 
     def disable(self, telegram_user_id: int, account_id: int) -> BotResponse:
+        response_text = "账号已禁用。"
         with UnitOfWork(self._session_factory) as uow:
             user = uow.users.get_or_create(telegram_user_id)
-            uow.accounts.get_for_user(account_id, user.id)
-            uow.accounts.mark_disabled(account_id)
-            uow.commit()
-        return BotResponse("账号已禁用。", buttons=_home_nav_buttons())
+            account = uow.accounts.get_for_user(account_id, user.id)
+            with uow.account_locks.acquire(account_id):
+                uow.session.refresh(account)
+                if account.status == ACCOUNT_STATUS_DELETED:
+                    response_text = "账号已删除。"
+                    return BotResponse(response_text, buttons=_home_nav_buttons())
+                uow.accounts.mark_disabled(account_id)
+                uow.mappings.invalidate_for_account(account_id)
+                uow.commit()
+        return BotResponse(response_text, buttons=_home_nav_buttons())
 
     def delete_confirm(self, telegram_user_id: int, account_id: int) -> BotResponse:
         with UnitOfWork(self._session_factory) as uow:
@@ -169,8 +180,12 @@ class AccountManagementService:
         with UnitOfWork(self._session_factory) as uow:
             user = uow.users.get_or_create(telegram_user_id)
             account = uow.accounts.get_for_user(account_id, user.id)
-            _delete_account_for_user(uow, user.id, account)
-            uow.commit()
+            with uow.account_locks.acquire(account_id):
+                uow.session.refresh(account)
+                if account.status == ACCOUNT_STATUS_DELETED:
+                    return BotResponse("账号已删除。", buttons=_home_nav_buttons())
+                _delete_account_for_user(uow, user.id, account)
+                uow.commit()
         return BotResponse("账号已删除。", buttons=_home_nav_buttons())
 
     def relogin(self, telegram_user_id: int, account_id: int) -> BotResponse:
@@ -179,14 +194,46 @@ class AccountManagementService:
             account = uow.accounts.get_for_user(account_id, user.id)
             if account.status == ACCOUNT_STATUS_ACTIVE:
                 return BotResponse("该账号当前无需重新登录。", buttons=_home_nav_buttons())
-            phone_number = account.phone_number
-            _delete_incomplete_account(uow, account.id)
             uow.conversation_states.clear(user.id)
-            auth = AuthService(uow, self._authenticator, self._cipher)
-            challenge = auth.start_binding(telegram_user_id, phone_number, DeveloperSlot.PRIMARY)
+            challenge = self._restart_primary_auth(uow, telegram_user_id, account)
             uow.conversation_states.set(user.id, STATE_AWAITING_CODE, challenge.id)
             uow.commit()
             return _code_prompt_response(uow, challenge.id, "", detail="验证码已重新发送，请输入最新验证码。")
+
+    def _restart_primary_auth(self, uow, telegram_user_id: int, account):
+        auth = AuthService(uow, self._authenticator, self._cipher)
+        if account.status != "binding":
+            action = _slot_action_for_current_session(uow, account.id, DeveloperSlot.PRIMARY)
+            return auth.start_slot_authorization(
+                telegram_user_id,
+                account.id,
+                DeveloperSlot.PRIMARY,
+                action=action,
+            )
+        return auth.start_binding(telegram_user_id, account.phone_number, DeveloperSlot.PRIMARY)
+
+    def authorize_slot(self, telegram_user_id: int, action) -> BotResponse:
+        with UnitOfWork(self._session_factory) as uow:
+            user = uow.users.get_or_create(telegram_user_id)
+            account = uow.accounts.get_for_user(action.account_id, user.id)
+            auth = AuthService(uow, self._authenticator, self._cipher)
+            challenge = auth.start_slot_authorization(
+                telegram_user_id,
+                account.id,
+                action.slot,
+                action=action.action,
+            )
+            return self._continue_auth_challenge(uow, user.id, challenge.id)
+
+    def _continue_auth_challenge(self, uow, user_id: int, challenge_id: int) -> BotResponse:
+        challenge = uow.auth_challenges.get(challenge_id)
+        if challenge.status == AuthStep.PASSWORD_REQUIRED.value:
+            uow.conversation_states.set(user_id, STATE_AWAITING_PASSWORD, challenge.id)
+            uow.commit()
+            return BotResponse("该账号开启了 2FA，请输入二次密码。", buttons=_cancel_buttons())
+        uow.conversation_states.set(user_id, STATE_AWAITING_CODE, challenge.id)
+        uow.commit()
+        return _code_prompt_response(uow, challenge.id, "")
 
     def relay_help(self, _telegram_user_id: int) -> BotResponse:
         return BotResponse(RELAY_HELP_TEXT, buttons=_home_nav_buttons())
@@ -198,9 +245,11 @@ class AccountManagementService:
         with UnitOfWork(self._session_factory) as uow:
             user = uow.users.get_or_create(telegram_user_id)
             state = uow.conversation_states.get(user.id)
-            _cancel_challenge_if_needed(uow, state)
+            final_status = _cancel_challenge_if_needed(uow, state)
             uow.conversation_states.clear(user.id)
             uow.commit()
+        if final_status == AuthStep.COMPLETE.value:
+            return BotResponse("授权已完成，无法取消。", buttons=_home_nav_buttons())
         return BotResponse("已取消当前操作。", buttons=_home_nav_buttons())
 
     def _continue_state(self, uow, *, telegram_user_id: int, user_id: int, state, text: str) -> BotResponse:
@@ -222,6 +271,9 @@ class AccountManagementService:
         with UnitOfWork(self._session_factory) as uow:
             user = uow.users.get_or_create(telegram_user_id)
             state = uow.conversation_states.get(user.id)
+            completed = self._completed_submit_response(uow, user.id, action, state=state)
+            if completed is not None:
+                return completed
             require_code_state(state, action.challenge_id)
             if action.name == "digit":
                 return _code_prompt_response(uow, action.challenge_id, f"{action.buffer}{action.value}")
@@ -245,6 +297,18 @@ class AccountManagementService:
                 )
         raise RuntimeError(f"未知验证码按钮操作: {action.name}")
 
+    def _completed_submit_response(self, uow, user_id: int, action, *, state) -> BotResponse | None:
+        if action.name != "submit" or state is not None:
+            return None
+        challenge = uow.auth_challenges.get(action.challenge_id)
+        if challenge.status != AuthStep.COMPLETE.value:
+            return None
+        account = uow.accounts.get_for_user(challenge.bound_tg_account_id, user_id)
+        sessions = uow.sessions.list_for_account(account.id)
+        uow.conversation_states.clear(user_id)
+        uow.commit()
+        return BotResponse(_detail_text(account, sessions), buttons=_detail_buttons(account, sessions))
+
     def _bind_phone(self, uow, *, telegram_user_id: int, user_id: int, phone: str) -> BotResponse:
         if not PHONE_PATTERN.match(phone):
             return BotResponse("手机号需包含国家区号，例如 +8613812345678。", buttons=_cancel_buttons())
@@ -257,6 +321,7 @@ class AccountManagementService:
     def _submit_keypad_code(self, uow, *, user_id: int, challenge_id: int, code: str) -> BotResponse:
         if not code:
             return _code_prompt_response(uow, challenge_id, "", detail="请先使用数字按钮输入验证码。")
+        challenge = uow.auth_challenges.get(challenge_id)
         auth = AuthService(uow, self._authenticator, self._cipher)
         try:
             step = auth.submit_code(challenge_id, code)
@@ -270,25 +335,34 @@ class AccountManagementService:
             return BotResponse("该账号开启了 2FA，请输入二次密码。", buttons=_cancel_buttons())
         uow.conversation_states.clear(user_id)
         uow.commit()
-        return BotResponse("绑定成功。", buttons=_home_nav_buttons())
+        return BotResponse(_authorization_success_text(challenge.purpose), buttons=_home_nav_buttons())
 
     def _resend_code(self, uow, *, telegram_user_id: int, user_id: int, challenge_id: int) -> BotResponse:
-        challenge = uow.auth_challenges.get(challenge_id)
-        phone_number = challenge.phone_number
-        _delete_incomplete_account(uow, challenge.bound_tg_account_id)
-        uow.conversation_states.clear(user_id)
         auth = AuthService(uow, self._authenticator, self._cipher)
-        new_challenge = auth.start_binding(telegram_user_id, phone_number, DeveloperSlot.PRIMARY)
+        new_challenge = auth.restart_challenge(telegram_user_id, challenge_id)
         uow.conversation_states.set(user_id, STATE_AWAITING_CODE, new_challenge.id)
         uow.commit()
         return _code_prompt_response(uow, new_challenge.id, "", detail="验证码已重新发送，请输入最新验证码。")
 
     def _submit_password(self, uow, *, user_id: int, challenge_id: int | None, password: str) -> BotResponse:
+        resolved_id = _require_challenge(challenge_id)
+        challenge = uow.auth_challenges.get(resolved_id)
         auth = AuthService(uow, self._authenticator, self._cipher)
         try:
-            auth.submit_password(_require_challenge(challenge_id), password)
+            auth.submit_password(resolved_id, password)
         except AuthFailure as exc:
             return _auth_failure_response(uow, user_id=user_id, challenge_id=challenge_id, failure=exc)
         uow.conversation_states.clear(user_id)
         uow.commit()
-        return BotResponse("绑定成功。", buttons=_home_nav_buttons())
+        return BotResponse(_authorization_success_text(challenge.purpose), buttons=_home_nav_buttons())
+
+
+def _authorization_success_text(purpose: str) -> str:
+    if purpose == AuthPurpose.SLOT_AUTHORIZATION.value:
+        return "槽位授权成功。"
+    return "绑定成功。"
+
+
+def _slot_action_for_current_session(uow, account_id: int, slot: DeveloperSlot) -> str:
+    session = uow.sessions.get_for_account(account_id, slot)
+    return "reauth" if session is not None and session.encrypted_session else "bind"

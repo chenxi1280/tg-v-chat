@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from tg_v_chat.bot.handlers import BotReplyCommand
-from tg_v_chat.domain import MediaKind
+from tg_v_chat.domain import MediaArtifact, MediaKind
 
 REPLY_REQUIRED = "请使用 Telegram 的回复功能，回复 Bot 推送的原消息后再发送。"
 
@@ -17,6 +17,7 @@ class BotIncomingMessage:
     reply_to_message_id: int | None
     text: str
     media_kind: MediaKind = MediaKind.TEXT
+    artifacts: tuple[MediaArtifact, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -103,4 +104,5 @@ def _reply_command(message: BotIncomingMessage) -> BotReplyCommand:
         reply_to_message_id=message.reply_to_message_id,
         media_kind=message.media_kind,
         payload=message.text,
+        artifacts=message.artifacts,
     )

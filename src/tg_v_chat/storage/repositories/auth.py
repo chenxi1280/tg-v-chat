@@ -16,6 +16,7 @@ class AuthChallengeRepository:
         slot: DeveloperSlot,
         code_hash: str,
         pending_session: str | None = None,
+        purpose: str = "initial_bind",
     ):
         model = AuthChallengeModel(
             bound_tg_account_id=account_id,
@@ -23,6 +24,7 @@ class AuthChallengeRepository:
             developer_slot=slot.value,
             phone_code_hash=code_hash,
             pending_session=pending_session,
+            purpose=purpose,
         )
         self._session.add(model)
         self._session.flush()

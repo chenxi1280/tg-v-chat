@@ -24,7 +24,7 @@ class FailoverRepository:
         model = SessionFailoverEventModel(
             bound_tg_account_id=account_id,
             from_slot=from_slot.value,
-            to_slot=from_slot.value,
+            to_slot=None,
             status="exhausted",
             reason=reason,
         )

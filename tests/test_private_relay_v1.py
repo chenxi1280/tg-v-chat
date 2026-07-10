@@ -4,6 +4,7 @@ import pytest
 
 from tg_v_chat.crypto import SessionCipher
 from tg_v_chat.domain import (
+    DeliveryFailure,
     DeveloperSlot,
     IncomingPrivateMessage,
     MediaKind,
@@ -14,7 +15,7 @@ from tg_v_chat.domain import (
 from tg_v_chat.services.auth import AuthChallenge, AuthService, AuthStep, AuthenticatedSession, PasswordRequired
 from tg_v_chat.services.relay import PrivateRelayService
 from tg_v_chat.storage.database import create_session_factory, init_db
-from tg_v_chat.storage.models import RelayMessageModel
+from tg_v_chat.storage.models import BotPushMessageModel, RelayMessageModel, ReplyMappingModel
 from tg_v_chat.storage.repositories import UnitOfWork
 
 
@@ -82,9 +83,15 @@ class FakeSenderPool:
 
 
 @pytest.fixture()
-def uow():
+def session_factory():
     factory = create_session_factory("sqlite:///:memory:")
     init_db(factory)
+    return factory
+
+
+@pytest.fixture()
+def uow(session_factory):
+    factory = session_factory
     with UnitOfWork(factory) as unit:
         yield unit
 
@@ -95,6 +102,7 @@ def create_active_account(uow, system_user_id=1):
     for slot in DeveloperSlot:
         status = SessionStatus.ACTIVE if slot is DeveloperSlot.PRIMARY else SessionStatus.STANDBY
         uow.sessions.create(account.id, slot=slot, encrypted_session="encrypted", status=status)
+    uow.accounts.mark_active(account.id)
     uow.commit()
     return account
 
@@ -329,3 +337,46 @@ def test_reply_fails_when_all_sessions_are_unavailable(uow):
 
     events = uow.failovers.list_for_account(account.id)
     assert [event.status for event in events] == ["switched", "switched", "exhausted"]
+
+
+@pytest.mark.parametrize("account_status", ["disabled", "deleted", "reauth_required"])
+def test_incoming_rejects_unusable_account_before_any_relay_write(session_factory, account_status):
+    with UnitOfWork(session_factory) as uow:
+        account = create_active_account(uow)
+        getattr(uow.accounts, f"mark_{account_status}")(account.id)
+        uow.commit()
+        account_id = account.id
+    bot = FakeBotGateway()
+
+    with pytest.raises(DeliveryFailure, match="account_unavailable"):
+        with UnitOfWork(session_factory) as uow:
+            PrivateRelayService(uow, bot, FakeSenderPool()).receive_private_message(
+                IncomingPrivateMessage(account_id, 88, 999, MediaKind.TEXT, "blocked", None, 0)
+            )
+
+    with UnitOfWork(session_factory) as uow:
+        assert uow.session.query(RelayMessageModel).count() == 0
+        assert uow.session.query(BotPushMessageModel).count() == 0
+        assert uow.session.query(ReplyMappingModel).count() == 0
+    assert bot.pushes == []
+
+
+def test_incoming_rejects_disabled_system_user_before_any_relay_write(session_factory):
+    with UnitOfWork(session_factory) as uow:
+        account = create_active_account(uow)
+        uow.users.mark_disabled(account.system_user_id)
+        uow.commit()
+        account_id = account.id
+    bot = FakeBotGateway()
+
+    with pytest.raises(DeliveryFailure, match="system_user_disabled"):
+        with UnitOfWork(session_factory) as uow:
+            PrivateRelayService(uow, bot, FakeSenderPool()).receive_private_message(
+                IncomingPrivateMessage(account_id, 88, 1000, MediaKind.TEXT, "blocked", None, 0)
+            )
+
+    with UnitOfWork(session_factory) as uow:
+        assert uow.session.query(RelayMessageModel).count() == 0
+        assert uow.session.query(BotPushMessageModel).count() == 0
+        assert uow.session.query(ReplyMappingModel).count() == 0
+    assert bot.pushes == []

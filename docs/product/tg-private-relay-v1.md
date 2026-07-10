@@ -8,11 +8,11 @@
 - actual_project_path: `/Users/xida/PycharmProjects/tg-v-chat`
 - path_correction: 原 handoff 路径 `/Users/xida/PycharmProjects/tg-v-caht` 是 typo，实际项目目录为 `/Users/xida/PycharmProjects/tg-v-chat`。
 - level: L2
-- evidence_level: E1
+- evidence_level: E3
 - design_status: complete
 - ready_status: ready
-- done_status: not_done
-- release_gate: pending
+- done_status: remediation_code_complete_e3_passed
+- release_gate: pending_production_verification
 - production_verification_required: true
 - dev_handoff_ready: true
 - dev_handoff_status: sent
@@ -71,8 +71,9 @@
 
 ### Out Of Scope
 
-- 群聊、频道、话题消息中转。
-- 语音、视频、文件、GIF、联系人、位置等非 V1 媒体。
+- No groups or channels: 不扩展群聊、频道、话题消息中转。
+- No additional media types: 不扩展语音、视频、文件、GIF、联系人、位置等非 V1 媒体。
+- No silent media size limit: 本轮不新增静默媒体大小上限；边界失败必须显式记录并返回。
 - 多客服分配、标签、CRM、自动回复。
 - 自动养号或规避平台风控策略。
 - 端到端加密承诺。
@@ -88,9 +89,35 @@
 | BotConversationState | awaiting_phone, awaiting_code, awaiting_password | Bot 内账号绑定向导的用户级状态。 |
 | PrivateChatPeer | known, blocked, unavailable | 原私聊对象。 |
 | RelayMessage | received, pushed, reply_pending, sent, failed | 私聊中转消息。 |
-| BotPushMessage | pushed, failed | Bot 推送给 SystemUser 的消息。 |
-| ReplyMapping | active, expired, missing | Bot 推送消息到原私聊上下文的映射。 |
+| BotPushMessage | pending, sending, sent, failed, uncertain | Bot 推送给 SystemUser 的 durable dispatch。 |
+| ReplyMapping | active, expired | Bot 推送消息到原私聊上下文的映射。 |
+| OutgoingDispatch | pending, sending, sent, failed, uncertain | SystemUser 回复原私聊对象的 durable dispatch。 |
+| IncomingAlbumBatchDispatch | pending, sending, sent, failed, uncertain | 入站相册作为一个有序批次推送给 Bot。 |
+| MediaSpoolArtifact | staging, ready, sent, failed, released | 共享媒体 spool 中的持久化 artifact。 |
 | SessionFailoverEvent | switched, exhausted | session 自动切换事件。 |
+
+## Durable Relay Contracts
+
+The following state and failure contracts are normative:
+
+```text
+Outgoing dispatch: pending, sending, sent, failed, uncertain
+BotPushMessage dispatch: pending, sending, sent, failed, uncertain
+Incoming album batch dispatch: pending, sending, sent, failed, uncertain
+```
+
+- `pending` 必须在远端 I/O 前持久化；调用远端前进入 `sending`；只有远端结果明确且终态落库后才能进入 `sent` 或 `failed`。
+- remote success followed by a database update failure becomes uncertain。远端结果歧义也进入 `uncertain`；uncertain is not retried automatically，恢复流程不得自动重复发送。
+- exactly-once is not claimed。本产品只承诺 durable state 与去重入口，不对 Telegram 远端副作用宣称 exactly-once。
+- `SessionFailure` 表示 session 授权、连接或槽位不可用；`DeliveryFailure` 表示 peer、权限、FloodWait、媒体或其他业务投递失败。
+- Only SessionFailure may fail over。DeliveryFailure does not change TgSessionSlot health，也不得推进备用槽位或污染账号 session 状态。
+
+Reply and media persistence contracts:
+
+- ReplyMapping states: active, expired。失效时写入 `invalidated_at`；time-based TTL is not introduced and remains unproven。
+- Disabling or deleting an account expires its ReplyMapping records；显式失效同样写入 `invalidated_at`。
+- 所有进程使用共享、owner-only 的 `TG_V_CHAT_MEDIA_ROOT`。Media spool artifact states are staging, ready, sent, failed, released。
+- Unsupported incoming media fails explicitly，并且 no fake BotPushMessage or ReplyMapping is created。
 
 ## Functional Design
 

@@ -10,7 +10,7 @@
 - evidence_level: E3
 - design_status: complete
 - ready_status: ready
-- done_status: code_complete_e3_passed
+- done_status: remediation_code_complete_e3_passed
 - release_gate: pending_production_verification
 - production_verification_required: true
 
@@ -187,11 +187,22 @@ Buttons:
 
 | button_text | callback_data | condition |
 | --- | --- | --- |
-| 重新授权 | `account.reauth:{account_id}` | account is degraded, reauth_required, expired, revoked, or failed |
-| 补充备用授权 | `account.standby.bind:{account_id}` | standby_1 or standby_2 is missing/expired |
+| 授权缺失槽位 | `account.slot.bind:{account_id}:{slot}` | target slot has never been authorized |
+| 重新授权槽位 | `account.slot.reauth:{account_id}:{slot}` | target slot is expired, revoked, or failed |
 | 禁用账号 | `account.disable.confirm:{account_id}` | account is not disabled |
 | 返回账号列表 | `account.list` | always |
 | 返回首页 | `account.home` | always |
+
+### Session Slot Authorization And Account Status
+
+- primary, standby_1, and standby_2 are authorized independently；每个槽位必须使用对应 DeveloperAppSlot 完成自己的 phone/code/2FA 流程。
+- The primary session must not be copied 到 standby_1 或 standby_2；补授权和重新授权只更新 callback 指定的 target slot。
+- 缺失槽位统一使用 `account.slot.bind:{account_id}:{slot}`，已有槽位重新授权统一使用 `account.slot.reauth:{account_id}:{slot}`；`slot` 只允许 `primary`、`standby_1`、`standby_2`。
+- `primary usable => active`。
+- `primary unusable and any standby usable => degraded`。
+- `all authorized slots unusable => reauth_required`。
+- disabled and deleted accounts are not recomputed；禁用或删除是显式终态，不由 session health 自动覆盖。
+- An unauthorized standby does not cause degradation；standby 从未授权时，只要 primary usable，账号仍为 active。
 
 ### Disable Confirmation
 
@@ -321,5 +332,5 @@ Help content must be operational:
 - design_status: complete
 - missing_inputs: none for V1 product design
 - dev_handoff_ready: true
-- implementation_status: code_complete_e3_passed
+- implementation_status: remediation_in_progress_e4_unproven
 - implementation_boundary: This PRD authorizes product and implementation planning for account management flow only. It does not authorize fake auth success, mock production verification, or silent fallbacks.

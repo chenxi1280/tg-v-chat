@@ -40,6 +40,14 @@ class AccountRepository:
             .all()
         )
 
+    def list_operational(self) -> list[BoundTgAccountModel]:
+        return (
+            self._session.query(BoundTgAccountModel)
+            .filter(BoundTgAccountModel.status.in_(("active", "degraded")))
+            .order_by(BoundTgAccountModel.id.asc())
+            .all()
+        )
+
     def find_incomplete_for_user_phone(self, system_user_id: int, phone_number: str) -> BoundTgAccountModel | None:
         accounts = (
             self._session.query(BoundTgAccountModel)
@@ -93,6 +101,12 @@ class AccountRepository:
         self._session.flush()
         return account
 
+    def mark_degraded(self, account_id: int) -> BoundTgAccountModel:
+        return self._mark_status(account_id, "degraded")
+
+    def mark_reauth_required(self, account_id: int) -> BoundTgAccountModel:
+        return self._mark_status(account_id, "reauth_required")
+
     def mark_disabled(self, account_id: int) -> BoundTgAccountModel:
         account = self.get(account_id)
         account.status = "disabled"
@@ -109,6 +123,12 @@ class AccountRepository:
         account = self.get(account_id)
         self._session.delete(account)
         self._session.flush()
+
+    def _mark_status(self, account_id: int, status: str) -> BoundTgAccountModel:
+        account = self.get(account_id)
+        account.status = status
+        self._session.flush()
+        return account
 
     def _has_sessions(self, account_id: int) -> bool:
         return self._session.query(TgSessionSlotModel.id).filter_by(bound_tg_account_id=account_id).first() is not None

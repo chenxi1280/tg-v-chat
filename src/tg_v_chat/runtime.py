@@ -7,8 +7,9 @@ import time
 from tg_v_chat.config import load_config
 from tg_v_chat.domain import DeveloperSlot
 from tg_v_chat.main import build_runtime
+from tg_v_chat.runtime_health import RoleHeartbeat
 from tg_v_chat.telegram.private_listener import TelethonPrivateListenerProcess
-from tg_v_chat.telegram.telethon_clients import DeveloperAppConfig, TelethonAuthenticator, TelethonBotProcess
+from tg_v_chat.telegram.telethon_clients import DeveloperAppConfig, SlotAuthenticatorRegistry, TelethonBotProcess
 
 
 VALID_ROLES = {"bot", "listener", "worker"}
@@ -31,19 +32,37 @@ def main() -> None:
         config.session_encryption_key,
         config.bot_token,
         app_configs=app_configs,
+        media_root=config.media_root,
     )
     app_config = app_configs[DeveloperSlot.PRIMARY]
-    bot_process = TelethonBotProcess(app_config, config.bot_token, runtime.bot_router(TelethonAuthenticator(app_config)))
+    authenticator = SlotAuthenticatorRegistry(app_configs)
+    heartbeat = RoleHeartbeat(config.heartbeat_root)
+    _remove_stale_heartbeats(heartbeat)
+    bot_process = TelethonBotProcess(
+        app_config,
+        config.bot_token,
+        runtime.bot_router(authenticator),
+        media_root=config.media_root,
+        heartbeat=heartbeat,
+    )
     listener_process = TelethonPrivateListenerProcess(
         app_configs,
         config.bot_token,
         runtime.session_factory,
         session_cipher=runtime.session_cipher,
+        media_root=config.media_root,
+        heartbeat=heartbeat,
     )
-    run_role(args.role, bot_runner=bot_process.run, listener_runner=listener_process.run)
+    stop_signal = StopSignal()
+    run_role(
+        args.role,
+        bot_runner=bot_process.run,
+        listener_runner=listener_process.run,
+        worker_runner=_worker_runner(runtime.worker_runner, heartbeat, stop_signal),
+    )
 
 
-def run_role(role: str, *, bot_runner=None, listener_runner=None, wait=None) -> None:
+def run_role(role: str, *, bot_runner=None, listener_runner=None, worker_runner=None, wait=None) -> None:
     wait_runner = wait or wait_forever
     if role == "bot":
         if bot_runner is None:
@@ -54,6 +73,11 @@ def run_role(role: str, *, bot_runner=None, listener_runner=None, wait=None) -> 
         if listener_runner is None:
             raise RuntimeError("listener runner is required")
         listener_runner()
+        return
+    if role == "worker":
+        if worker_runner is None:
+            raise RuntimeError("worker runner is required")
+        worker_runner()
         return
     wait_runner(role)
 
@@ -71,6 +95,30 @@ def wait_forever(role: str) -> None:
     while not stop_signal.stop:
         time.sleep(5)
     print(f"tg-v-chat {role} stopped")
+
+
+def _worker_runner(worker_runner, heartbeat: RoleHeartbeat, stop_signal: StopSignal):
+    def run() -> None:
+        signal.signal(signal.SIGTERM, stop_signal.handle)
+        signal.signal(signal.SIGINT, stop_signal.handle)
+        worker_runner.run_forever(
+            should_stop=lambda: stop_signal.stop,
+            sleep=lambda seconds: _sleep_with_heartbeat(seconds, heartbeat, stop_signal),
+        )
+
+    return run
+
+
+def _sleep_with_heartbeat(seconds: int, heartbeat: RoleHeartbeat, stop_signal: StopSignal) -> None:
+    heartbeat.beat("worker")
+    deadline = time.monotonic() + seconds
+    while not stop_signal.stop and time.monotonic() < deadline:
+        time.sleep(min(1, deadline - time.monotonic()))
+
+
+def _remove_stale_heartbeats(heartbeat: RoleHeartbeat) -> None:
+    for role in VALID_ROLES:
+        heartbeat.remove(role)
 
 
 def _app_configs(config) -> dict[DeveloperSlot, DeveloperAppConfig]:

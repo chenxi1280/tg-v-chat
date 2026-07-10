@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
+
+from tg_v_chat.domain import DeveloperSlot
 from tg_v_chat.services.auth import AuthChallenge, AuthFailure, AuthenticatedSession, PasswordRequired
 from tg_v_chat.telegram.telethon_clients.config import DeveloperAppConfig
 from tg_v_chat.telegram.telethon_clients.helpers import _run_async
@@ -79,6 +82,35 @@ class TelethonAuthenticator:
             raise AuthFailure("二次密码不正确，请重新输入。") from exc
         finally:
             await client.disconnect()
+
+
+class SlotAuthenticatorRegistry:
+    def __init__(
+        self,
+        app_configs: Mapping[DeveloperSlot, DeveloperAppConfig],
+        *,
+        authenticator_factory: Callable[[DeveloperAppConfig], TelethonAuthenticator] = TelethonAuthenticator,
+    ):
+        missing = set(DeveloperSlot) - set(app_configs)
+        if missing:
+            names = ", ".join(sorted(slot.value for slot in missing))
+            raise ValueError(f"缺少 developer app 配置: {names}")
+        self._authenticators = {slot: authenticator_factory(app_configs[slot]) for slot in DeveloperSlot}
+
+    def start(self, phone_number: str, slot: DeveloperSlot) -> AuthChallenge:
+        return self._for_slot(slot).start(phone_number, slot)
+
+    def complete_code(self, challenge: AuthChallenge, code: str):
+        return self._for_slot(challenge.developer_slot).complete_code(challenge, code)
+
+    def complete_password(self, challenge: AuthChallenge, password: str):
+        return self._for_slot(challenge.developer_slot).complete_password(challenge, password)
+
+    def _for_slot(self, slot: DeveloperSlot) -> TelethonAuthenticator:
+        try:
+            return self._authenticators[slot]
+        except KeyError as exc:
+            raise ValueError(f"未知 developer slot: {slot}") from exc
 
 
 async def _authenticated_session(client) -> AuthenticatedSession:

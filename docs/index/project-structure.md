@@ -4,10 +4,10 @@
 
 - project_path: `/Users/xida/PycharmProjects/tg-v-chat`
 - initialized_at: `2026-06-28`
-- last_dev_update: `2026-06-29`
+- last_dev_update: `2026-07-10`
 - detected_runtime: Python 3.11+
 - git_repository: present
-- implementation_status: bot_update_runtime_deployed_account_management_code_complete_module_split_e3_passed
+- implementation_status: relay_hardening_dispatch_media_listener_worker_e3_passed_e4_unproven
 - dependency_manifest: `pyproject.toml`
 - migration_tool: Alembic
 - test_runner: pytest
@@ -22,13 +22,16 @@
 | Bot reply handling | `src/tg_v_chat/bot/handlers.py` | dev | Converts Bot reply commands into relay service calls; non-reply is explicit failure in service |
 | Telegram adapters | `src/tg_v_chat/telegram/telethon_clients/` (package) | dev | Telethon bot process, inline callback handling, real user-session authenticator, gateway/sender ports; disconnected adapters raise explicit errors; `__init__.py` re-exports all public symbols |
 | Telegram private listener | `src/tg_v_chat/telegram/private_listener/` (package) | dev | Bound listener session identity, private-message event parsing, and push formatting; `__init__.py` re-exports `BoundListenerSession`, `TelethonPrivateListenerProcess`, and event helpers |
-| Worker runner | `src/tg_v_chat/workers/runner.py` | dev | Real worker loop entrypoint; raises when no workers are configured |
-| Runtime healthcheck | `src/tg_v_chat/healthcheck.py` | dev | Validates required env and PostgreSQL connectivity |
-| Runtime process | `src/tg_v_chat/runtime.py` | dev | Role-based bot/listener/worker process entrypoint |
+| Worker runner | `src/tg_v_chat/workers/runner.py` | dev | Real `run_once` / `run_forever` worker loop entrypoint; raises when no workers are configured |
+| Session health worker | `src/tg_v_chat/workers/session_health.py` | dev | Verifies authorized sessions, recomputes account status, and retries terminal media release |
+| Runtime healthcheck | `src/tg_v_chat/healthcheck.py` | dev | Validates PostgreSQL connectivity plus optional role heartbeat freshness |
+| Runtime heartbeat | `src/tg_v_chat/runtime_health.py` | dev | Role heartbeat files and freshness constants for bot/listener/worker health |
+| Runtime process | `src/tg_v_chat/runtime.py` | dev | Role-based bot/listener/worker process entrypoint with stale heartbeat cleanup |
 | Storage bootstrap | `src/tg_v_chat/storage/database.py` | dev | SQLAlchemy engine/session factory; runtime requires PostgreSQL unless tests opt in to SQLite |
-| Migrations | `migrations/versions/0001_initial_private_relay.py` ... `migrations/versions/0008_account_display_identity.py` | dev | Alembic schema migrations; production must not rely on `Base.metadata.create_all` |
+| Media store | `src/tg_v_chat/telegram/media_store.py` | dev | Owner-only shared file spool for incoming/outgoing Telegram media artifacts |
+| Migrations | `migrations/versions/0001_initial_private_relay.py` ... `migrations/versions/0009_relay_runtime_hardening.py` | dev | Alembic schema migrations; production must not rely on `Base.metadata.create_all` |
 | CI release workflow | `.github/workflows/deploy-production.yml` | dev | release branch and manual trigger; PostgreSQL service, Alembic migration, pytest, GHCR image, SSH compose deploy |
-| Server compose | `docker-compose.server.yml` | dev | Uses infra-compose PostgreSQL via `infra_default`; defines migrate, bot, listener, worker services |
+| Server compose | `docker-compose.server.yml` | dev | Uses infra-compose PostgreSQL via `infra_default`; defines migrate, bot, listener, worker services, shared media volume, and role healthchecks |
 
 ## Account Management Bot Flow
 
@@ -50,11 +53,12 @@
 | `tg_v_chat.bot.router` | Bot command/callback/reply routing | Telegram Bot private messages and callbacks | BotResponse or BotReplyCommand dispatch | High: user-visible bot responsiveness |
 | `tg_v_chat.bot.account_management` | Account management message rendering and wizard state transitions | account summary, binding state, account detail | Bot message text and reply markup | High: first-run UX and binding clarity |
 | `tg_v_chat.storage.models` | SQLAlchemy persistence schema | Repository writes | Database rows | High: schema changes affect migrations |
-| `tg_v_chat.storage.repositories` | UnitOfWork and repository layer | Service calls | persisted rows | Medium |
+| `tg_v_chat.storage.repositories` | UnitOfWork and repository layer | Service calls | persisted rows, locks, dispatch records, media metadata | Medium |
 | `tg_v_chat.services.auth` | Phone code / 2FA binding and account limit enforcement | phone, code, password | Bound account and session slots | High: secrets and auth state |
-| `tg_v_chat.services.relay` | Incoming idempotency, Bot push mapping, reply dispatch, failover, outgoing idempotency | Telegram private updates, Bot replies | Relay records, failover events, sent result | High: message correctness |
-| `tg_v_chat.telegram` | Telethon integration boundary | connected clients/callables | Bot push and user-session sends | High: production network behavior |
-| `tg_v_chat.workers` | Listener/health/failover worker entrypoint | worker callables | worker execution | Medium |
+| `tg_v_chat.services.relay` | Incoming idempotency, Bot push mapping, reply dispatch, failover, outgoing idempotency, media artifact release | Telegram private updates, Bot replies | Relay records, dispatch rows, media metadata, failover events, sent result | High: message correctness |
+| `tg_v_chat.services.relay_conversions` | Pure relay model-to-domain conversion helpers | ORM rows and account identity | typed relay domain objects | Low |
+| `tg_v_chat.telegram` | Telethon integration boundary | connected clients/callables/media files | Bot push, user-session sends, listener downloads | High: production network behavior |
+| `tg_v_chat.workers` | Session health and media cleanup worker entrypoint | worker callables, database rows, media spool | worker execution and account/session recompute | Medium |
 | `.github/workflows/deploy-production.yml` | GitHub Actions release path | push to `release` or manual dispatch | checks, image, deploy jobs | High: production deploy transport |
 | `docker-compose.server.yml` | Production compose shape | env file and GHCR image | migrate/bot/listener/worker services | High: production runtime |
 
@@ -66,14 +70,17 @@ Single-file modules that exceeded the maintainability threshold were split into 
 
 | module | responsibility |
 | --- | --- |
-| `__init__.py` | Re-exports all 11 repository classes plus `UnitOfWork` |
+| `__init__.py` | Re-exports repository classes, account operation locks, media repositories, and `UnitOfWork` |
 | `users.py` | `UserRepository` |
-| `accounts.py` | `AccountRepository` (bound accounts, status transitions) |
-| `sessions.py` | `SessionSlotRepository` (primary/standby slots) |
+| `accounts.py` | `AccountRepository` (bound accounts, operational status queries, status transitions) |
+| `sessions.py` | `SessionSlotRepository` (primary/standby slots, revision, health transitions) |
 | `auth.py` | `AuthChallengeRepository` (phone code / 2FA state) |
 | `conversation.py` | `ConversationStateRepository` (per-user bind wizard state) |
-| `relay.py` | `RelayRepository`, `PushRepository`, `MappingRepository`, `OutgoingReplyRepository`, `_relay_values` helper |
+| `relay.py` | `RelayRepository`, `MappingRepository`, `_relay_values` helper |
+| `dispatch.py` | `PushRepository`, `OutgoingReplyRepository`, durable dispatch claim/terminal transitions |
 | `failover.py` | `FailoverRepository` (session failover events) |
+| `media.py` | `MediaArtifactRepository`, `MediaGroupRepository`, artifact lifecycle and album dispatch metadata |
+| `locks.py` | `AccountOperationLock`, database-backed per-account operation locking |
 | `unit_of_work.py` | `UnitOfWork` aggregating every repository |
 
 ### `tg_v_chat.bot.account_management` (package, replaces `account_management.py`)
@@ -96,7 +103,7 @@ Single-file modules that exceeded the maintainability threshold were split into 
 | `helpers.py` | `_run_async`, `_input_peer` |
 | `gateway.py` | `TelethonBotGateway`, `TelethonSenderPool`, `TelethonReplySender` |
 | `authenticator.py` | `TelethonAuthenticator` (send-code / complete-code / complete-password / session export) |
-| `bot_process.py` | `TelethonBotProcess` and inline-keyboard button builders |
+| `bot_process.py` | `TelethonBotProcess`, Bot reply media download, album reply parsing, role heartbeat, and inline-keyboard button builders |
 
 ### `tg_v_chat.telegram.private_listener` (package, replaces `private_listener.py`)
 
@@ -105,7 +112,14 @@ Single-file modules that exceeded the maintainability threshold were split into 
 | `__init__.py` | Re-exports `BoundListenerSession`, `TelethonPrivateListenerProcess`, `_format_push_message`, `async_private_message_from_event`, `private_message_event_builder`, `private_message_from_event` |
 | `event_parsing.py` | `_peer_id`, `_peer_access_hash`, `_sender_name`, `_media_kind` and event-to-domain conversion |
 | `formatting.py` | `_format_push_message`, `_format_message_time` |
-| `process.py` | `BoundListenerSession`, `TelethonPrivateListenerProcess`, `_incoming_handler`, `_load_active_bindings`, `_NoopSenderPool` |
+| `process.py` | `BoundListenerSession`, `ListenerClientState`, listener reconciliation, incoming media/album handlers, `_load_active_bindings`, `_NoopSenderPool` |
+
+### `tg_v_chat.workers`
+
+| module | responsibility |
+| --- | --- |
+| `runner.py` | `WorkerRunner.run_once` and `run_forever` scheduling loop |
+| `session_health.py` | `SessionHealthWorker`, `TelethonSessionVerifier`, account status recompute, terminal media release retry |
 
 ### Test split (`tests/`)
 
@@ -133,6 +147,8 @@ Single-file modules that exceeded the maintainability threshold were split into 
 | ReplyMapping | `reply_mappings` | `system_user_id + bot_message_id` to original peer/source message context |
 | OutgoingReply | `outgoing_replies` | outgoing idempotency by `system_user_id + bot_reply_message_id` |
 | SessionFailoverEvent | `session_failover_events` | primary -> standby switch evidence |
+| RelayMediaArtifact | `relay_media_artifacts` | incoming/outgoing file artifact metadata, status, release evidence |
+| RelayMediaGroup | `relay_media_groups` | album dispatch metadata and terminal state |
 
 ## Test And Verification Entrypoints
 
@@ -158,6 +174,11 @@ Single-file modules that exceeded the maintainability threshold were split into 
 - Session-layer primary failure switches to standby_1 and records `SessionFailoverEvent`.
 - Exhausted sessions raise explicit `SessionFailure` and record an `exhausted` failover event.
 - Media groups defer pushes until the sequence anchor arrives, then flush pending relays by sequence.
+- Incoming and outgoing photo/sticker artifacts use the shared media spool and are released after sent or deterministic failed dispatch.
+- Duplicate media updates and duplicate Bot media replies discard newly downloaded artifacts without resending or leaving ready files.
+- Listener reconciliation isolates one-account startup failures, replaces changed session fingerprints, disconnects non-operational accounts, and can listen via standby for degraded accounts.
+- Worker role runs real health cycles: unauthorized sessions become revoked, transport probe failures do not poison session health, account status is recomputed, and terminal media release is retried.
+- Role healthchecks require PostgreSQL plus fresh bot/listener/worker heartbeat files.
 - Bot `/start` and `/admin` now return the Account Management home with inline keyboard navigation.
 - `runtime --role bot` starts a real Telethon Bot process instead of building dependencies and sleeping.
 - Account Management Bot Flow PRD is complete and E3-tested for `/start`, `/admin`, bind button, phone/code/2FA wizard, account identity display, account detail, disable confirmation, callback handling, and reply passthrough.
@@ -166,10 +187,10 @@ Single-file modules that exceeded the maintainability threshold were split into 
 ## Known Limits Before Production
 
 - Account Management inline keyboard flow is code-complete and E3-tested locally, but not yet E4-verified in production Telegram after release.
-- User session listener and user-session send adapters still need environment-specific production wiring and E4 verification.
+- User session listener, user-session send adapters, media relay, and role heartbeat are E3-tested locally but still need environment-specific E4 verification.
 - Alembic initial migration exists and PostgreSQL SQL generation is verified, but local online PostgreSQL migration is unproven because Docker daemon is unavailable in this environment.
-- GitHub Actions release workflow exists and has deployed the bot update runtime; Account Management still requires release and E4 production verification.
-- Release gate for Account Management remains pending until real Telegram callback UI, phone code delivery, optional 2FA, account list/detail, and disable confirmation are verified in production.
+- GitHub Actions release workflow and compose wiring exist, but this branch has not been released or E4-verified in production.
+- Release gate remains pending until real Telegram callback UI, phone code delivery, optional 2FA, account list/detail, listener intake, media relay, outbound reply, role heartbeat, and disable confirmation are verified in production.
 
 ## Update Rule
 

@@ -27,3 +27,9 @@ class UserRepository:
         if not user:
             raise LookupError(f"SystemUser 不存在: {telegram_user_id}")
         return user
+
+    def mark_disabled(self, user_id: int) -> SystemUserModel:
+        user = self.get(user_id)
+        user.status = "disabled"
+        self._session.flush()
+        return user

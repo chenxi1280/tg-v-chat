@@ -12,9 +12,10 @@ x-app-env: &app-env
   TG_V_CHAT_STANDBY_1_API_HASH: ${TG_V_CHAT_STANDBY_1_API_HASH:?TG_V_CHAT_STANDBY_1_API_HASH is required}
   TG_V_CHAT_STANDBY_2_API_ID: ${TG_V_CHAT_STANDBY_2_API_ID:?TG_V_CHAT_STANDBY_2_API_ID is required}
   TG_V_CHAT_STANDBY_2_API_HASH: ${TG_V_CHAT_STANDBY_2_API_HASH:?TG_V_CHAT_STANDBY_2_API_HASH is required}
+  TG_V_CHAT_MEDIA_ROOT: ${TG_V_CHAT_MEDIA_ROOT:?TG_V_CHAT_MEDIA_ROOT is required}
+  TG_V_CHAT_HEARTBEAT_ROOT: ${TG_V_CHAT_HEARTBEAT_ROOT:?TG_V_CHAT_HEARTBEAT_ROOT is required}
 
 x-healthcheck: &app-healthcheck
-  test: ["CMD", "python", "-m", "tg_v_chat.healthcheck"]
   interval: 20s
   timeout: 10s
   start_period: 30s
@@ -38,10 +39,16 @@ services:
     command: ["python", "-m", "tg_v_chat.runtime", "--role", "bot"]
     environment:
       <<: *app-env
+    volumes:
+      - type: volume
+        source: tg-v-chat-media
+        target: ${TG_V_CHAT_MEDIA_ROOT:?TG_V_CHAT_MEDIA_ROOT is required}
     depends_on:
       migrate:
         condition: service_completed_successfully
-    healthcheck: *app-healthcheck
+    healthcheck:
+      <<: *app-healthcheck
+      test: ["CMD", "python", "-m", "tg_v_chat.healthcheck", "--role", "bot"]
     networks:
       - infra_default
 
@@ -52,10 +59,16 @@ services:
     command: ["python", "-m", "tg_v_chat.runtime", "--role", "listener"]
     environment:
       <<: *app-env
+    volumes:
+      - type: volume
+        source: tg-v-chat-media
+        target: ${TG_V_CHAT_MEDIA_ROOT:?TG_V_CHAT_MEDIA_ROOT is required}
     depends_on:
       migrate:
         condition: service_completed_successfully
-    healthcheck: *app-healthcheck
+    healthcheck:
+      <<: *app-healthcheck
+      test: ["CMD", "python", "-m", "tg_v_chat.healthcheck", "--role", "listener"]
     networks:
       - infra_default
 
@@ -66,10 +79,16 @@ services:
     command: ["python", "-m", "tg_v_chat.runtime", "--role", "worker"]
     environment:
       <<: *app-env
+    volumes:
+      - type: volume
+        source: tg-v-chat-media
+        target: ${TG_V_CHAT_MEDIA_ROOT:?TG_V_CHAT_MEDIA_ROOT is required}
     depends_on:
       migrate:
         condition: service_completed_successfully
-    healthcheck: *app-healthcheck
+    healthcheck:
+      <<: *app-healthcheck
+      test: ["CMD", "python", "-m", "tg_v_chat.healthcheck", "--role", "worker"]
     networks:
       - infra_default
 
@@ -77,3 +96,6 @@ networks:
   infra_default:
     name: ${INFRA_NETWORK_NAME:-infra_default}
     external: true
+
+volumes:
+  tg-v-chat-media:

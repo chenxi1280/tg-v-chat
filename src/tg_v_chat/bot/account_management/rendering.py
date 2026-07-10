@@ -8,7 +8,7 @@ from tg_v_chat.bot.account_management.constants import (
 from tg_v_chat.bot.account_management.parsing import _require_challenge
 from tg_v_chat.bot.code_keypad import CodePrompt, code_prompt_response as build_code_prompt_response
 from tg_v_chat.bot.router import BotResponse, ButtonSpec
-from tg_v_chat.domain import MAX_BOUND_ACCOUNTS
+from tg_v_chat.domain import MAX_BOUND_ACCOUNTS, DeveloperSlot
 
 
 def _mask_phone(phone: str) -> str:
@@ -128,15 +128,32 @@ def _cancel_buttons() -> tuple[ButtonSpec, ...]:
     return (ButtonSpec("取消绑定", "account.bind.cancel"), ButtonSpec("返回首页", "account.home"))
 
 
-def _detail_buttons(account) -> tuple[ButtonSpec, ...]:
+def _detail_buttons(account, sessions) -> tuple[ButtonSpec, ...]:
     buttons = [
         ButtonSpec("删除账号", f"account.delete.confirm:{account.id}"),
         ButtonSpec("返回账号列表", "account.list"),
         ButtonSpec("返回首页", "account.home"),
     ]
     if account.status != "disabled":
+        buttons[0:0] = _slot_buttons(account.id, sessions)
         buttons.insert(0, ButtonSpec("禁用账号", f"account.disable.confirm:{account.id}"))
     return tuple(buttons)
+
+
+def _slot_buttons(account_id: int, sessions) -> list[ButtonSpec]:
+    by_slot = {row.developer_slot: row for row in sessions}
+    labels = {
+        DeveloperSlot.PRIMARY: "主授权",
+        DeveloperSlot.STANDBY_1: "备用 1",
+        DeveloperSlot.STANDBY_2: "备用 2",
+    }
+    buttons = []
+    for slot in DeveloperSlot:
+        authorized = bool(getattr(by_slot.get(slot.value), "encrypted_session", None))
+        action = "reauth" if authorized else "bind"
+        verb = "重新授权" if authorized else "授权"
+        buttons.append(ButtonSpec(f"{labels[slot]}{verb}", f"account.slot.{action}:{account_id}:{slot.value}"))
+    return buttons
 
 
 def _disable_confirm_text(account) -> str:
@@ -181,5 +198,13 @@ def _relogin_nav_buttons(account_id: int | None) -> tuple[ButtonSpec, ...]:
         return _home_nav_buttons()
     return (
         ButtonSpec("重新登录", f"account.relogin:{account_id}"),
+        ButtonSpec("返回账号管理", "account.home"),
+    )
+
+
+def _slot_auth_nav_buttons(account_id: int, slot: str, action: str) -> tuple[ButtonSpec, ...]:
+    label = "重新授权该槽位" if action == "reauth" else "授权该槽位"
+    return (
+        ButtonSpec(label, f"account.slot.{action}:{account_id}:{slot}"),
         ButtonSpec("返回账号管理", "account.home"),
     )

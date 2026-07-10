@@ -12,8 +12,10 @@ from tg_v_chat.services.auth import TelegramAuthenticator
 from tg_v_chat.services.relay import PrivateRelayService
 from tg_v_chat.storage.database import create_session_factory, require_postgresql_url
 from tg_v_chat.storage.repositories import UnitOfWork
+from tg_v_chat.telegram.media_store import MediaStore
 from tg_v_chat.telegram.telethon_clients import TelethonBotGateway, TelethonReplySender, TelethonSenderPool
 from tg_v_chat.workers.runner import WorkerRunner
+from tg_v_chat.workers.session_health import SessionHealthWorker, TelethonSessionVerifier
 
 
 @dataclass(frozen=True)
@@ -37,6 +39,7 @@ def build_runtime(
     *,
     app_configs: dict | None = None,
     allow_sqlite_for_tests: bool = False,
+    media_root: str | None = None,
 ) -> Runtime:
     if not bot_token:
         raise RuntimeError("bot token is required")
@@ -44,10 +47,12 @@ def build_runtime(
         require_postgresql_url(database_url)
     cipher = SessionCipher(session_key)
     session_factory = create_session_factory(database_url)
+    media_store = MediaStore(media_root) if media_root is not None else None
     bot_gateway = TelethonBotGateway()
-    sender_pool = _sender_pool(app_configs, cipher)
-    handler = BotReplyHandler(_relay_factory(session_factory, bot_gateway, sender_pool))
-    return Runtime(handler, bot_gateway, sender_pool, WorkerRunner(), session_factory, cipher)
+    sender_pool = _sender_pool(app_configs, cipher, media_store)
+    worker_runner = _worker_runner(app_configs, session_factory, cipher, media_store=media_store)
+    handler = BotReplyHandler(_relay_factory(session_factory, bot_gateway, sender_pool, media_store=media_store))
+    return Runtime(handler, bot_gateway, sender_pool, worker_runner, session_factory, cipher)
 
 
 def main() -> None:
@@ -55,17 +60,24 @@ def main() -> None:
     build_runtime(config.database_url, config.session_encryption_key, config.bot_token)
 
 
-def _relay_factory(session_factory, bot_gateway, sender_pool):
+def _relay_factory(session_factory, bot_gateway, sender_pool, *, media_store):
     @contextmanager
     def create_service() -> PrivateRelayService:
         with UnitOfWork(session_factory) as unit:
-            yield PrivateRelayService(unit, bot_gateway, sender_pool)
+            yield PrivateRelayService(unit, bot_gateway, sender_pool, media_store=media_store)
 
     return create_service
 
 
-def _sender_pool(app_configs: dict | None, cipher: SessionCipher) -> TelethonSenderPool:
+def _sender_pool(app_configs: dict | None, cipher: SessionCipher, media_store) -> TelethonSenderPool:
     if app_configs is None:
         return TelethonSenderPool()
-    reply_sender = TelethonReplySender(app_configs, cipher)
+    reply_sender = TelethonReplySender(app_configs, cipher, media_store=media_store)
     return TelethonSenderPool(reply_sender.send_reply)
+
+
+def _worker_runner(app_configs: dict | None, session_factory, cipher: SessionCipher, *, media_store) -> WorkerRunner:
+    if app_configs is None:
+        return WorkerRunner()
+    worker = SessionHealthWorker(session_factory, cipher, TelethonSessionVerifier(app_configs), media_store=media_store)
+    return WorkerRunner([worker.run_once])

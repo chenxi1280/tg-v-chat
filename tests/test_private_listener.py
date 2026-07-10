@@ -63,8 +63,8 @@ def _assert_private_text_payload(message) -> None:
 def test_private_listener_subscribes_to_incoming_and_outgoing_messages():
     builder = private_message_event_builder()
 
-    assert builder.incoming is None
-    assert builder.outgoing is None
+    assert builder.incoming is True
+    assert builder.outgoing is False
 
 
 def test_async_private_event_reads_access_hash_from_input_sender():
@@ -178,7 +178,10 @@ def test_listener_registers_handler_when_identity_sync_fails(monkeypatch):
 
     telethon = ModuleType("telethon")
     telethon.TelegramClient = FakeClient
-    telethon.events = SimpleNamespace(NewMessage=lambda: "new-message-builder")
+    telethon.events = SimpleNamespace(
+        NewMessage=lambda **_kwargs: "new-message-builder",
+        Album=lambda: "album-builder",
+    )
     sessions = ModuleType("telethon.sessions")
     sessions.StringSession = lambda value=None: value
     monkeypatch.setitem(sys.modules, "telethon", telethon)
@@ -202,7 +205,7 @@ def test_listener_registers_handler_when_identity_sync_fails(monkeypatch):
 
     client = asyncio.run(process._start_user_client(binding, object()))
 
-    assert len(client.handlers) == 1
+    assert len(client.handlers) == 2
 
 
 def test_push_message_display_shows_sender_recipient_username_content_and_time():

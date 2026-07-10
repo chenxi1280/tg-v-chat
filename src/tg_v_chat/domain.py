@@ -33,6 +33,29 @@ class SessionFailure(RuntimeError):
 
 
 @dataclass(frozen=True)
+class DeliveryFailure(RuntimeError):
+    code: str
+    detail: str
+
+
+@dataclass(frozen=True)
+class DeliveryUncertain(RuntimeError):
+    code: str
+    detail: str
+
+
+@dataclass(frozen=True)
+class MediaArtifact:
+    storage_key: str
+    file_name: str
+    mime_type: str
+    byte_size: int
+    media_kind: MediaKind
+    sequence: int
+    metadata_json: str | None = None
+
+
+@dataclass(frozen=True)
 class TelegramPeer:
     id: int
     access_hash: int | None = None
@@ -52,6 +75,12 @@ class IncomingPrivateMessage:
     sent_at: datetime | None = None
     recipient_account_name: str | None = None
     recipient_username: str | None = None
+    artifacts: tuple[MediaArtifact, ...] = ()
+
+
+@dataclass(frozen=True)
+class IncomingPrivateBatch:
+    messages: tuple[IncomingPrivateMessage, ...]
 
 
 @dataclass(frozen=True)
@@ -61,6 +90,7 @@ class OutgoingReply:
     reply_to_message_id: int | None
     media_kind: MediaKind
     payload: str
+    artifacts: tuple[MediaArtifact, ...] = ()
 
 
 @dataclass(frozen=True)

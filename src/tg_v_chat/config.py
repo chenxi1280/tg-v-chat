@@ -15,6 +15,8 @@ class AppConfig:
     standby_1_api_hash: str
     standby_2_api_id: str
     standby_2_api_hash: str
+    media_root: str
+    heartbeat_root: str
 
 
 def load_config() -> AppConfig:
@@ -28,6 +30,8 @@ def load_config() -> AppConfig:
         standby_1_api_hash=_require_env("TG_V_CHAT_STANDBY_1_API_HASH"),
         standby_2_api_id=_require_env("TG_V_CHAT_STANDBY_2_API_ID"),
         standby_2_api_hash=_require_env("TG_V_CHAT_STANDBY_2_API_HASH"),
+        media_root=_require_env("TG_V_CHAT_MEDIA_ROOT"),
+        heartbeat_root=_require_env("TG_V_CHAT_HEARTBEAT_ROOT"),
     )
 
 
