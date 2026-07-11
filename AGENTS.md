@@ -1,66 +1,87 @@
-# Project Agent Rules
+1. Think Before Coding
+Don't assume. Don't hide confusion. Surface tradeoffs.
 
-## Runtime
+Before implementing:
 
-This project runs in Codex native. Codex is both planner and executor.
+State your assumptions explicitly. If uncertain, ask.
+If multiple interpretations exist, present them - don't pick silently.
+If a simpler approach exists, say so. Push back when warranted.
+If something is unclear, stop. Name what's confusing. Ask.
+2. Simplicity First
+Minimum code that solves the problem. Nothing speculative.
 
-- Do not call stale `mcp__codex__codex` or `mcp__codex__codex_reply` guidance.
-- Search, read, edit, and test directly in this workspace.
-- Use Chinese for user-facing summaries unless the user asks otherwise.
+No features beyond what was asked.
+No abstractions for single-use code.
+No "flexibility" or "configurability" that wasn't requested.
+No error handling for impossible scenarios.
+If you write 200 lines and it could be 50, rewrite it.
+Ask yourself: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
 
-## Multi-Agent Protocol
+3. Surgical Changes
+Touch only what you must. Clean up only your own mess.
 
-Treat `/Users/xida/codexProject/codexwork/Codex多Agent协作机制与项目落地手册.md` as the source protocol for this project.
+When editing existing code:
 
-Core agents:
+Don't "improve" adjacent code, comments, or formatting.
+Don't refactor things that aren't broken.
+Match existing style, even if you'd do it differently.
+If you notice unrelated dead code, mention it - don't delete it.
+When your changes create orphans:
 
-- `prod-diagnosis`: online diagnosis and production verification.
-- `product`: intake, triage, PRD, product model, dataflow design, acceptance criteria.
-- `dev`: implementation, automated checks, project structure index.
-- `qa`: independent validation and regression evidence.
-- `flow-supervisor`: handoff delivery, ACK, timeout, retry, and board integrity.
+Remove imports/variables/functions that YOUR changes made unused.
+Don't remove pre-existing dead code unless asked.
+The test: Every changed line should trace directly to the user's request.
 
-Every input starts as an Intake Card, then becomes a Triage Card, Mini Bug Card, Incident Report, Bug Batch Plan, PRD, or ordinary plan.
+4. Goal-Driven Execution
+Define success criteria. Loop until verified.
 
-## Handoff Rules
+Transform tasks into verifiable goals:
 
-- If `next_agent` is not empty, `handoff_required=true` is mandatory.
-- A stage is not complete until the handoff is actually sent, or explicitly marked `handoff_delivery_status=blocked`.
-- `notify_xxx=true`, `next_agent=xxx`, or "需要通知" does not count as delivery.
-- Risky handoffs must include `idempotency_key`, `expected_ack_deadline`, `handoff_quality`, `locked_paths`, and `merge_owner`.
-- The receiver must validate the handoff before ACK: `complete`, `missing_inputs`, or `rejected`.
-- Important handoff messages must be written to `docs/worklogs/` before sending.
+"Add validation" → "Write tests for invalid inputs, then make them pass"
+"Fix the bug" → "Write a test that reproduces it, then make it pass"
+"Refactor X" → "Ensure tests pass before and after"
+For multi-step tasks, state a brief plan:
 
-## Evidence And Closure
+1. [Step] → verify: [check]
+2. [Step] → verify: [check]
+3. [Step] → verify: [check]
+Strong success criteria let you loop independently. Weak criteria ("make it work") require constant clarification.
 
-Evidence levels:
 
-- `E0`: oral or unclear description.
-- `E1`: static evidence such as screenshots, snippets, or error text.
-- `E2`: local reproduction, unit test, local script, or local screenshot.
-- `E3`: CI, integration test, build, or automated validation.
-- `E4`: real production evidence.
+# tg-v-chat Agent Rules
 
-Done rules:
+本项目是 `tg-v-chat`，真实项目目录为 `/Users/xida/PycharmProjects/tg-v-chat`。
+历史文档中出现的 `/Users/xida/PycharmProjects/tg-v-caht` 是拼写错误。
 
-- `L0`: product accepted with at least `E1`.
-- `L1`: QA targeted pass and product accepted.
-- `L2`: QA pass, product accepted, and release gate when required.
-- `L3`: QA pass, product accepted, and `production_fixed` with `E4`.
-- `blocked` and `unproven` are never `done`.
+## 项目真相源
 
-## Debug-First Policy
+- 产品口径：`docs/product/product-index.md`、`docs/product/tg-private-relay-v1.md`、`docs/product/account-management-bot-flow-v1.md`。
+- 数据流转：`docs/index/dataflow.md`。
+- 代码结构：`docs/index/project-structure.md`。
+- QA 验收：`docs/qa/validation-plan.md`。
+- 生产发布：`.github/workflows/deploy-production.yml`、`docker-compose.server.yml`、`docs/product/deploy-postgres-release-plan.md`。
+- 事故记录：`docs/incidents/README.md`。
 
-- Do not add silent fallbacks, fake success paths, or defensive bypasses just to make a task run.
-- Surface real failures through explicit errors, logs, or failing tests.
-- Do not use mocks as proof unless the user explicitly asks for mock-only validation.
+## 当前协作模式
 
-## Quality Baseline
+- 本仓库当前不启用强制多 Agent 流程。
+- 接到需求、Bug、线上问题或排障请求时，Codex 直接在当前线程完成读取、修改、测试和汇报。
+- 不要默认要求 Intake Card、product/dev/qa/prod-diagnosis 线程投递、`agent-status-board.md` 更新或 `docs/05-implementation/multi-agent-practice/` 读取。
+- `docs/templates/` 和 `docs/worklogs/` 仅作为历史模板或手工记录参考；只有用户明确要求多 Agent / handoff / worklog 时才使用。
+- 不要因为缺少多 Agent 投递记录而阻塞普通开发、修复、审查或发布验证。
 
-- Keep functions under 50 lines and files under 500 lines.
-- Keep nesting depth at 3 or less.
-- Prefer dependency injection and immutable data flow.
-- Avoid magic numbers; use named constants.
-- Validate external input at boundaries.
-- Never hardcode secrets.
+## 产品、代码和索引
+
+- 需求、流程、验收标准或数据流转变化时，先同步对应 `docs/product/` 文档和 `docs/index/dataflow.md`，再改代码。
+- 代码入口、模块边界、API、worker、模型、迁移、部署入口变化时，同步更新 `docs/index/project-structure.md`。
+- 账号管理、私聊中转、绑定授权、ReplyMapping、Session failover 等行为必须对齐 `docs/product/product-index.md` 中的业务对象和验收口径。
+- 生产运行必须使用 PostgreSQL；不要把 SQLite 测试路径当成生产证据。
+
+## 发布和验证
+
+- 生产发布路径默认是 `master -> release -> GitHub Actions Deploy Production`。
+- 影响生产的任务必须区分本地 E3 验收、GitHub Actions 发布结果和真实生产 E4 证据。
+- 单测优先使用 `python3 -c 'import subprocess; subprocess.run(["python3", "-m", "pytest"], timeout=60, check=True)'`，避免测试卡住。
+- 常用验证入口包括 `python3 -m pytest`、`python3 -m compileall -q src tests`、Alembic migration 检查和 `docker compose --env-file .env.example -f docker-compose.server.yml config`。
+- 不允许 silent fallback、mock success 或未经验证的完成声明。
 
