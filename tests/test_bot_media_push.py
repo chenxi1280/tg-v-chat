@@ -23,13 +23,16 @@ class RecordingBotClient:
         self.ids = ids or [501, 502, 503]
         self.messages = []
         self.files = []
+        self.calls = []
 
     async def send_message(self, user_id, text):
         self.messages.append((user_id, text))
+        self.calls.append("message")
         return type("Sent", (), {"id": self.ids.pop(0)})()
 
     async def send_file(self, user_id, file, caption=None):
         self.files.append((user_id, file, caption))
+        self.calls.append("file")
         if isinstance(file, list):
             return [type("Sent", (), {"id": self.ids.pop(0)})() for _item in file]
         return type("Sent", (), {"id": self.ids.pop(0)})()
@@ -37,7 +40,7 @@ class RecordingBotClient:
 
 class LoopCheckingBotClient(RecordingBotClient):
     def __init__(self, expected_loop):
-        super().__init__([701])
+        super().__init__([700, 701])
         self.expected_loop = expected_loop
 
     async def send_file(self, user_id, file, caption=None):
@@ -88,10 +91,13 @@ def test_gateway_uses_send_message_for_text_and_send_file_for_media(tmp_path):
     )
 
     assert gateway.push_private_message(1001, text) == 501
-    assert gateway.push_private_message(1001, photo) == 502
+    assert gateway.push_private_message(1001, photo) == 503
 
     assert client.messages[0][1].endswith("内容：hello")
-    assert client.files[0][2].endswith("内容：caption")
+    assert len(client.messages) == 2
+    assert client.messages[1][1].endswith("内容：caption")
+    assert client.files[0][2] is None
+    assert client.calls[-2:] == ["message", "file"]
 
 
 def test_gateway_from_client_schedules_media_send_on_owner_loop(tmp_path):
@@ -122,7 +128,7 @@ def test_successful_media_push_releases_artifact_file_and_metadata(tmp_path):
     with UnitOfWork(factory) as uow:
         PrivateRelayService(
             uow,
-            TelethonBotGateway.from_client(RecordingBotClient([601]), store),
+            TelethonBotGateway.from_client(RecordingBotClient([600, 601]), store),
             NoopSender(),
             media_store=store,
         ).receive_private_message(message)
@@ -165,7 +171,8 @@ def test_relay_pushes_album_as_ordered_batch_and_maps_each_bot_id(tmp_path):
     factory = _factory()
     account_id = _seed_account(factory)
     store = MediaStore(tmp_path)
-    bot = TelethonBotGateway.from_client(RecordingBotClient([601, 602]), store)
+    client = RecordingBotClient([600, 601, 602])
+    bot = TelethonBotGateway.from_client(client, store)
     batch = IncomingPrivateBatch(
         (
             IncomingPrivateMessage(
@@ -181,6 +188,9 @@ def test_relay_pushes_album_as_ordered_batch_and_maps_each_bot_id(tmp_path):
         results = PrivateRelayService(uow, bot, NoopSender()).receive_private_batch(batch)
 
     assert [item.bot_message_id for item in results] == [601, 602]
+    assert client.messages[0][1].endswith("内容：first")
+    assert client.files[0][2] is None
+    assert client.calls == ["message", "file"]
     with UnitOfWork(factory) as uow:
         assert uow.mappings.get_by_bot_message(1, 601).source_message_id == 11
         assert uow.mappings.get_by_bot_message(1, 602).source_message_id == 12

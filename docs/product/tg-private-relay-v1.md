@@ -123,7 +123,7 @@ Reply and media persistence contracts:
 
 - Bot 提供绑定入口、账号列表、解绑/禁用入口、授权状态查看入口。
 - 绑定流程按手机号、验证码、2FA 密码分步推进。
-- 收到私聊后，Bot 推送内容必须包含发送人、接收账号名、接收账号 `@username`、时间、消息内容和媒体。
+- 收到媒体私聊后，Bot 必须先独立推送发送人、接收账号名、接收账号 `@username`、时间和消息内容，再发送无 caption 的媒体；媒体位于详情之后。
 - 用户回复必须使用 Telegram reply 操作；非 reply 输入不进入代发链路。
 - 发送时优先使用 primary session；失败后按 standby_1、standby_2 顺序自动尝试。
 - 自动切换只针对 session 不可用、授权失效、连接失败等 session 层失败；业务拒绝或 peer 不可达不伪装为 session failover 成功。
@@ -181,7 +181,7 @@ Reply and media persistence contracts:
 - Reject binding the 21st account for one SystemUser.
 - Receive private text and emoji, then reply through Bot and confirm original peer receives it.
 - Receive private text and verify Bot push shows接收账号名 and接收用户名 instead of relying on phone number.
-- Receive private image and image album; verify album order is preserved.
+- Receive private image and image album; verify detail text precedes captionless media, and album order is preserved.
 - Receive and reply Telegram sticker.
 - Simulate primary session failure and verify standby_1 is used with SessionFailoverEvent.
 - Simulate primary and standby_1 failure and verify standby_2 is used.

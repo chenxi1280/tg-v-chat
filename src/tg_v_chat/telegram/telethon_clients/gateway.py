@@ -71,10 +71,11 @@ class TelethonBotGateway:
             if message.media_kind is MediaKind.TEXT:
                 sent = await self._client.send_message(system_user_id, _format_push_message(message))
                 return sent.id
+            await self._client.send_message(system_user_id, _format_push_message(message))
             sent = await self._client.send_file(
                 system_user_id,
                 str(_single_artifact_path(self._media_store, message)),
-                caption=_format_push_message(message),
+                caption=None,
             )
             return sent.id
         except DOMAIN_DELIVERY_ERRORS:
@@ -84,8 +85,9 @@ class TelethonBotGateway:
 
     async def _push_batch_with_client(self, system_user_id: int, batch: IncomingPrivateBatch) -> list[int]:
         try:
+            await self._client.send_message(system_user_id, _format_push_message(batch.messages[0]))
             files = [str(_single_artifact_path(self._media_store, message)) for message in batch.messages]
-            sent = await self._client.send_file(system_user_id, files, caption=_format_push_message(batch.messages[0]))
+            sent = await self._client.send_file(system_user_id, files, caption=None)
             return [item.id for item in sent]
         except DOMAIN_DELIVERY_ERRORS:
             raise
