@@ -1,6 +1,6 @@
 """scope native forward bridge item ids
 
-Revision ID: 0011_scope_native_forward_bridge_items
+Revision ID: 0011_native_forward_item_scope
 Revises: 0010_native_forward_bridge
 Create Date: 2026-07-18
 """
@@ -9,7 +9,7 @@ from alembic import op
 import sqlalchemy as sa
 
 
-revision = "0011_scope_native_forward_bridge_items"
+revision = "0011_native_forward_item_scope"
 down_revision = "0010_native_forward_bridge"
 branch_labels = None
 depends_on = None
