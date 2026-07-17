@@ -95,6 +95,9 @@ class TelethonBotGateway:
             raise _classified_bot_push_error(exc) from exc
 
     def notify_failure(self, system_user_id: int, text: str) -> None:
+        if self._client is not None:
+            self._run_client_call(self._client.send_message(system_user_id, text))
+            return
         if self._send_message is None:
             raise RuntimeError("Telethon bot client is not connected")
         failure_message = IncomingPrivateMessage(

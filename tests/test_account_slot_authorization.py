@@ -18,7 +18,7 @@ from tg_v_chat.telegram.telethon_clients.config import DeveloperAppConfig
 class SlotSessionAuthenticator(FakeAuthenticator):
     def complete_code(self, challenge, code):
         self.codes.append(code)
-        return AuthenticatedSession(f"session-{challenge.developer_slot.value}", "账号", "owner")
+        return AuthenticatedSession(f"session-{challenge.developer_slot.value}", 7001, "账号", "owner")
 
 
 class RecordingDelegate:
@@ -32,7 +32,7 @@ class RecordingDelegate:
 
     def complete_code(self, challenge, code):
         self.calls.append(("code", challenge.developer_slot))
-        return AuthenticatedSession(str(self.config.api_id), None, None)
+        return AuthenticatedSession(str(self.config.api_id), 7001, None, None)
 
 
 class CancellingCodeAuthenticator(FakeAuthenticator):
@@ -45,11 +45,11 @@ class CancellingCodeAuthenticator(FakeAuthenticator):
         with UnitOfWork(self._factory) as uow:
             uow.auth_challenges.mark_status(challenge.id, "cancelled")
             uow.commit()
-        return AuthenticatedSession("late-session", self.display_name, self.username)
+        return AuthenticatedSession("late-session", 7001, self.display_name, self.username)
 
     def complete_password(self, challenge, password):
         self.calls.append(("password", challenge.developer_slot))
-        return AuthenticatedSession(str(self.config.api_id), None, None)
+        return AuthenticatedSession(str(self.config.api_id), 7001, None, None)
 
 
 def _build_router(authenticator=None):

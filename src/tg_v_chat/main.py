@@ -14,6 +14,7 @@ from tg_v_chat.storage.database import create_session_factory, require_postgresq
 from tg_v_chat.storage.repositories import UnitOfWork
 from tg_v_chat.telegram.media_store import MediaStore
 from tg_v_chat.telegram.telethon_clients import TelethonBotGateway, TelethonReplySender, TelethonSenderPool
+from tg_v_chat.telegram.telethon_clients.forward_bridge import NativeForwardBridgeHandler
 from tg_v_chat.workers.runner import WorkerRunner
 from tg_v_chat.workers.session_health import SessionHealthWorker, TelethonSessionVerifier
 
@@ -26,6 +27,7 @@ class Runtime:
     worker_runner: WorkerRunner
     session_factory: object
     session_cipher: SessionCipher
+    native_forward_bridge_handler: NativeForwardBridgeHandler | None
 
     def bot_router(self, authenticator: TelegramAuthenticator) -> BotUpdateRouter:
         account_management = AccountManagementService(self.session_factory, authenticator, self.session_cipher)
@@ -40,11 +42,15 @@ def build_runtime(
     app_configs: dict | None = None,
     allow_sqlite_for_tests: bool = False,
     media_root: str | None = None,
+    native_forward_v2_enabled: bool = False,
+    bot_username: str | None = None,
 ) -> Runtime:
     if not bot_token:
         raise RuntimeError("bot token is required")
     if not allow_sqlite_for_tests:
         require_postgresql_url(database_url)
+    if native_forward_v2_enabled and not bot_username:
+        raise RuntimeError("bot_username_missing: V2 原生转发缺少 Bot username")
     cipher = SessionCipher(session_key)
     session_factory = create_session_factory(database_url)
     media_store = MediaStore(media_root) if media_root is not None else None
@@ -52,12 +58,19 @@ def build_runtime(
     sender_pool = _sender_pool(app_configs, cipher, media_store)
     worker_runner = _worker_runner(app_configs, session_factory, cipher, media_store=media_store)
     handler = BotReplyHandler(_relay_factory(session_factory, bot_gateway, sender_pool, media_store=media_store))
-    return Runtime(handler, bot_gateway, sender_pool, worker_runner, session_factory, cipher)
+    bridge_handler = NativeForwardBridgeHandler(session_factory) if native_forward_v2_enabled else None
+    return Runtime(handler, bot_gateway, sender_pool, worker_runner, session_factory, cipher, bridge_handler)
 
 
 def main() -> None:
     config = load_config()
-    build_runtime(config.database_url, config.session_encryption_key, config.bot_token)
+    build_runtime(
+        config.database_url,
+        config.session_encryption_key,
+        config.bot_token,
+        native_forward_v2_enabled=config.native_forward_v2_enabled,
+        bot_username=config.bot_username,
+    )
 
 
 def _relay_factory(session_factory, bot_gateway, sender_pool, *, media_store):

@@ -57,6 +57,46 @@ def test_load_config_rejects_template_placeholders(monkeypatch):
         load_config()
 
 
+def test_load_config_defaults_native_forward_v2_to_disabled(monkeypatch):
+    _set_valid_environment(monkeypatch)
+    monkeypatch.delenv("TG_V_CHAT_NATIVE_FORWARD_V2_ENABLED", raising=False)
+    monkeypatch.delenv("TG_V_CHAT_BOT_USERNAME", raising=False)
+    monkeypatch.delenv("TG_V_CHAT_NATIVE_FORWARD_BRIDGE_TIMEOUT_SECONDS", raising=False)
+
+    config = load_config()
+
+    assert config.native_forward_v2_enabled is False
+    assert config.bot_username is None
+    assert config.native_forward_bridge_timeout_seconds == 30
+
+
+def test_load_config_requires_bot_username_when_native_forward_v2_is_enabled(monkeypatch):
+    _set_valid_environment(monkeypatch)
+    monkeypatch.setenv("TG_V_CHAT_NATIVE_FORWARD_V2_ENABLED", "true")
+    monkeypatch.delenv("TG_V_CHAT_BOT_USERNAME", raising=False)
+
+    with pytest.raises(RuntimeError, match="TG_V_CHAT_BOT_USERNAME"):
+        load_config()
+
+
+def _set_valid_environment(monkeypatch):
+    values = {
+        "TG_V_CHAT_DATABASE_URL": "postgresql+psycopg://app_user:secret@postgres:5432/tg_v_chat",
+        "TG_V_CHAT_SESSION_KEY": "test-session-key",
+        "TG_V_CHAT_BOT_TOKEN": "bot-token",
+        "TG_V_CHAT_PRIMARY_API_ID": "1",
+        "TG_V_CHAT_PRIMARY_API_HASH": "hash",
+        "TG_V_CHAT_STANDBY_1_API_ID": "2",
+        "TG_V_CHAT_STANDBY_1_API_HASH": "hash",
+        "TG_V_CHAT_STANDBY_2_API_ID": "3",
+        "TG_V_CHAT_STANDBY_2_API_HASH": "hash",
+        "TG_V_CHAT_MEDIA_ROOT": "/tmp/tg-v-chat-media",
+        "TG_V_CHAT_HEARTBEAT_ROOT": "/tmp/tg-v-chat-heartbeats",
+    }
+    for name, value in values.items():
+        monkeypatch.setenv(name, value)
+
+
 def test_runtime_entrypoints_are_constructible():
     runtime = build_runtime("sqlite:///:memory:", "test-key", "bot-token", allow_sqlite_for_tests=True)
 
@@ -64,6 +104,21 @@ def test_runtime_entrypoints_are_constructible():
     assert isinstance(runtime.bot_gateway, TelethonBotGateway)
     assert isinstance(runtime.sender_pool, TelethonSenderPool)
     assert isinstance(runtime.worker_runner, WorkerRunner)
+
+
+def test_runtime_builds_native_bridge_only_when_v2_is_enabled():
+    disabled = build_runtime("sqlite:///:memory:", "test-key", "bot-token", allow_sqlite_for_tests=True)
+    enabled = build_runtime(
+        "sqlite:///:memory:",
+        "test-key",
+        "bot-token",
+        allow_sqlite_for_tests=True,
+        native_forward_v2_enabled=True,
+        bot_username="relay_bot",
+    )
+
+    assert disabled.native_forward_bridge_handler is None
+    assert enabled.native_forward_bridge_handler is not None
 
 
 def test_bot_reply_handler_closes_relay_context_on_failure():

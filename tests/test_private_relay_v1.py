@@ -32,11 +32,11 @@ class FakeAuthenticator:
         self.code_challenge_pending_session = challenge.pending_session
         if self.needs_password:
             return PasswordRequired("partial-session-after-code")
-        return AuthenticatedSession("session-string", "小号A", "example_user")
+        return AuthenticatedSession("session-string", 7001, "小号A", "example_user")
 
     def complete_password(self, challenge, password):
         self.password_checked = True
-        return AuthenticatedSession("session-string-2fa", "小号A", "example_user")
+        return AuthenticatedSession("session-string-2fa", 7001, "小号A", "example_user")
 
 
 class PasswordRequiredAuthenticator(FakeAuthenticator):
@@ -50,7 +50,7 @@ class PasswordRequiredAuthenticator(FakeAuthenticator):
 
     def complete_password(self, challenge, password):
         self.password_challenge_pending_session = challenge.pending_session
-        return AuthenticatedSession("session-string-2fa", "小号A", "example_user")
+        return AuthenticatedSession("session-string-2fa", 7001, "小号A", "example_user")
 
 
 class FakeBotGateway:

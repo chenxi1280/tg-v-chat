@@ -38,13 +38,13 @@ class FakeAuthenticator:
         self.codes.append(code)
         if self.needs_password:
             return PasswordRequired("partial-session")
-        return AuthenticatedSession("session-string", self.display_name, self.username)
+        return AuthenticatedSession("session-string", 7001, self.display_name, self.username)
 
     def complete_password(self, challenge, password):
         if self.password_failure is not None:
             raise self.password_failure
         self.passwords.append(password)
-        return AuthenticatedSession("session-string-2fa", self.display_name, self.username)
+        return AuthenticatedSession("session-string-2fa", 7001, self.display_name, self.username)
 
 
 class RetryPasswordAuthenticator(FakeAuthenticator):
@@ -55,7 +55,7 @@ class RetryPasswordAuthenticator(FakeAuthenticator):
         self.passwords.append(password)
         if len(self.passwords) == 1:
             raise AuthFailure("二次密码不正确，请重新输入。")
-        return AuthenticatedSession("session-string-2fa", self.display_name, self.username)
+        return AuthenticatedSession("session-string-2fa", 7001, self.display_name, self.username)
 
 
 @pytest.fixture()

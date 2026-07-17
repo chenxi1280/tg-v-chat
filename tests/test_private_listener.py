@@ -130,7 +130,7 @@ def test_async_private_event_reads_sender_name_and_sent_at():
 def test_listener_syncs_existing_account_identity_from_session_user():
     class Client:
         async def get_me(self):
-            return SimpleNamespace(first_name="接收", last_name="账号", username="receiver_user")
+            return SimpleNamespace(id=7001, first_name="接收", last_name="账号", username="receiver_user")
 
     factory = create_session_factory("sqlite:///:memory:")
     init_db(factory)
@@ -155,6 +155,7 @@ def test_listener_syncs_existing_account_identity_from_session_user():
     assert updated.username == "receiver_user"
     with UnitOfWork(factory) as uow:
         account = uow.accounts.get(1)
+        assert account.telegram_user_id == 7001
         assert account.display_name == "接收 账号"
         assert account.username == "receiver_user"
 

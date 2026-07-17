@@ -21,12 +21,14 @@ class TelethonBotProcess:
         *,
         media_root: str | None = None,
         heartbeat=None,
+        bridge_handler=None,
     ):
         self._app_config = app_config
         self._bot_token = bot_token
         self._router = router
         self._media_store = MediaStore(media_root) if media_root is not None else None
         self._heartbeat = heartbeat
+        self._bridge_handler = bridge_handler
 
     def run(self) -> None:
         asyncio.run(self._run())
@@ -37,6 +39,9 @@ class TelethonBotProcess:
 
         client = TelegramClient(StringSession(), self._app_config.api_id, self._app_config.api_hash)
         await client.start(bot_token=self._bot_token)
+        if self._bridge_handler is not None:
+            client.add_event_handler(self._handle_bridge_new_message, events.NewMessage(incoming=True))
+            client.add_event_handler(self._handle_bridge_album, events.Album())
         client.add_event_handler(self._handle_new_message, events.NewMessage(incoming=True))
         client.add_event_handler(self._handle_album, events.Album())
         client.add_event_handler(self._handle_callback, events.CallbackQuery())
@@ -46,6 +51,20 @@ class TelethonBotProcess:
             await client.run_until_disconnected()
         finally:
             _cancel_heartbeat(task)
+
+    async def _handle_bridge_new_message(self, event) -> None:
+        if not getattr(event, "is_private", False):
+            return
+        if await self._bridge_handler.handle_message(event):
+            from telethon import events
+
+            raise events.StopPropagation
+
+    async def _handle_bridge_album(self, event) -> None:
+        if await self._bridge_handler.handle_album(event):
+            from telethon import events
+
+            raise events.StopPropagation
 
     async def _handle_new_message(self, event) -> None:
         if not getattr(event, "is_private", False):

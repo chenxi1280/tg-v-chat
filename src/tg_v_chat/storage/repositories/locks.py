@@ -22,6 +22,10 @@ class AccountOperationLock:
         raise RuntimeError(f"不支持账号操作锁的数据库: {dialect}")
 
 
+class TelegramIdentityLock(AccountOperationLock):
+    """Cross-process lock keyed by a real Telegram user id."""
+
+
 class _PostgresqlAccountLock:
     def __init__(self, engine, account_id: int):
         self._engine = engine

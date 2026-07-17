@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
+from typing import Protocol
 
 
 MAX_BOUND_ACCOUNTS = 20
@@ -17,7 +18,30 @@ class DeveloperSlot(str, Enum):
 class MediaKind(str, Enum):
     TEXT = "text"
     PHOTO = "photo"
+    VIDEO = "video"
+    VIDEO_NOTE = "video_note"
+    AUDIO = "audio"
+    VOICE = "voice"
     STICKER = "sticker"
+
+
+class NativeForwardBatchStatus(str, Enum):
+    COLLECTING = "collecting"
+    SEALED = "sealed"
+    BRIDGE_SENDING = "bridge_sending"
+    AWAITING_BOT = "awaiting_bot"
+    FINAL_SENDING = "final_sending"
+    SENT = "sent"
+    FAILED = "failed"
+    UNCERTAIN = "uncertain"
+
+
+class NativeForwardItemStatus(str, Enum):
+    PENDING = "pending"
+    BRIDGED = "bridged"
+    SENT = "sent"
+    FAILED = "failed"
+    UNCERTAIN = "uncertain"
 
 
 class SessionStatus(str, Enum):
@@ -59,6 +83,26 @@ class MediaArtifact:
 class TelegramPeer:
     id: int
     access_hash: int | None = None
+
+
+@dataclass(frozen=True)
+class NativeForwardRequest:
+    batch_id: int
+    marker_token: str
+    expected_count: int
+    source_peer: TelegramPeer
+    source_message_ids: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class FirstHopForwardResult:
+    marker_message_id: int
+    bridge_message_ids: tuple[int, ...]
+
+
+class UserSessionForwarder(Protocol):
+    def forward_batch(self, request: NativeForwardRequest) -> FirstHopForwardResult:
+        raise NotImplementedError
 
 
 @dataclass(frozen=True)

@@ -1,9 +1,13 @@
 """Account list, detail, disable, and delete tests."""
+from datetime import datetime, timedelta, timezone
+
+import pytest
+
 from account_management_helpers import FakeAuthenticator, bot_parts, submit_code_with_keypad
 from tg_v_chat.bot.account_management import AccountManagementService
 from tg_v_chat.bot.router import BotCallback, BotIncomingMessage, BotUpdateRouter
 from tg_v_chat.crypto import SessionCipher
-from tg_v_chat.domain import IncomingPrivateMessage, MediaKind
+from tg_v_chat.domain import IncomingPrivateMessage, MediaKind, TelegramPeer
 from tg_v_chat.storage.database import create_session_factory, init_db
 from tg_v_chat.storage.repositories import UnitOfWork
 
@@ -59,6 +63,23 @@ def test_account_detail_and_disable_are_scoped_to_owner(bot_parts):
         assert mapping.invalidated_at is not None
 
 
+@pytest.mark.parametrize("callback", ("account.disable:1", "account.delete:1"))
+def test_account_invalidation_terminalizes_its_inflight_native_forward_batch(bot_parts, callback):
+    router, _authenticator, _commands, factory = bot_parts
+    router.handle_callback(BotCallback(146517, "account.bind.start"))
+    code_prompt = router.handle(BotIncomingMessage(146517, 11, None, "+15550000001"))[0]
+    submit_code_with_keypad(router, code_prompt)
+    batch_id = _create_inflight_native_batch(factory, account_id=1)
+
+    router.handle_callback(BotCallback(146517, callback))
+
+    with UnitOfWork(factory) as uow:
+        batch = uow.native_forwards.get(batch_id)
+        assert batch.status == "failed"
+        assert batch.failure_code == "account_unavailable"
+        assert uow.native_forwards.list_items(batch_id)[0].status == "failed"
+
+
 def test_active_account_can_be_deleted_from_detail(bot_parts):
     router, _authenticator, _commands, factory = bot_parts
     router.handle_callback(BotCallback(146517, "account.bind.start"))
@@ -85,6 +106,28 @@ def test_active_account_can_be_deleted_from_detail(bot_parts):
         assert mapping.invalidated_at is not None
         assert uow.sessions.list_for_account(account.id) == []
         assert uow.accounts.list_for_user(user.id) == []
+
+
+def test_deleted_account_identity_can_be_rebound(bot_parts):
+    router, _authenticator, _commands, factory = bot_parts
+    router.handle_callback(BotCallback(146517, "account.bind.start"))
+    prompt = router.handle(BotIncomingMessage(146517, 11, None, "+15550000001"))[0]
+    submit_code_with_keypad(router, prompt)
+    account_list = router.handle_callback(BotCallback(146517, "account.list"))[0]
+    detail = router.handle_callback(BotCallback(146517, account_list.buttons[0].data))[0]
+    delete_button = next(button for button in detail.buttons if button.text == "删除账号")
+    confirm = router.handle_callback(BotCallback(146517, delete_button.data))[0]
+    router.handle_callback(BotCallback(146517, confirm.buttons[0].data))
+
+    router.handle_callback(BotCallback(146517, "account.bind.start"))
+    rebound_prompt = router.handle(BotIncomingMessage(146517, 12, None, "+15550000001"))[0]
+    rebound = submit_code_with_keypad(router, rebound_prompt)
+
+    assert rebound.text == "绑定成功。"
+    with UnitOfWork(factory) as uow:
+        user = uow.users.get_by_telegram_id(146517)
+        account = uow.accounts.list_for_user(user.id)[0]
+        assert account.telegram_user_id == 7001
 
 
 def test_incomplete_account_delete_removes_account_and_challenge():
@@ -135,3 +178,26 @@ def _create_mapping(factory, *, account_id: int, bot_message_id: int) -> None:
         )
         uow.mappings.create(bot_message_id, relay, account.system_user_id)
         uow.commit()
+
+
+def _create_inflight_native_batch(factory, *, account_id: int) -> int:
+    now = datetime(2026, 7, 17, tzinfo=timezone.utc)
+    with UnitOfWork(factory) as uow:
+        account = uow.accounts.get(account_id)
+        uow.accounts.update_telegram_identity(account.id, 7001)
+        relay, _ = uow.relays.create_or_get(
+            IncomingPrivateMessage(account.id, 88, 900, MediaKind.TEXT, "inflight", None, 1, 9901)
+        )
+        batch = uow.native_forwards.create_collecting(
+            system_user_id=account.system_user_id,
+            account_id=account.id,
+            telegram_user_id=7001,
+            peer=TelegramPeer(88, 9901),
+            collect_until=now,
+            marker_token="inflight-marker",
+        )
+        uow.native_forwards.append_item(batch.id, relay.id)
+        uow.native_forwards.seal(batch.id)
+        uow.native_forwards.claim_bridge(batch.id, now + timedelta(seconds=30))
+        uow.commit()
+        return batch.id

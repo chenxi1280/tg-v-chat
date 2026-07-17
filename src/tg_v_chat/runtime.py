@@ -33,6 +33,8 @@ def main() -> None:
         config.bot_token,
         app_configs=app_configs,
         media_root=config.media_root,
+        native_forward_v2_enabled=config.native_forward_v2_enabled,
+        bot_username=config.bot_username,
     )
     app_config = app_configs[DeveloperSlot.PRIMARY]
     authenticator = SlotAuthenticatorRegistry(app_configs)
@@ -44,6 +46,7 @@ def main() -> None:
         runtime.bot_router(authenticator),
         media_root=config.media_root,
         heartbeat=heartbeat,
+        bridge_handler=runtime.native_forward_bridge_handler,
     )
     listener_process = TelethonPrivateListenerProcess(
         app_configs,
@@ -52,6 +55,9 @@ def main() -> None:
         session_cipher=runtime.session_cipher,
         media_root=config.media_root,
         heartbeat=heartbeat,
+        native_forward_v2_enabled=config.native_forward_v2_enabled,
+        bot_username=config.bot_username,
+        native_forward_bridge_timeout_seconds=config.native_forward_bridge_timeout_seconds,
     )
     stop_signal = StopSignal()
     run_role(

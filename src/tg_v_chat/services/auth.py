@@ -46,6 +46,7 @@ class AuthChallenge:
 @dataclass(frozen=True)
 class AuthenticatedSession:
     session_string: str
+    telegram_user_id: int
     display_name: str | None
     username: str | None
 
@@ -250,17 +251,26 @@ class AuthService:
         active_slot = DeveloperSlot(challenge.developer_slot)
         encrypted = self._cipher.encrypt(auth_session.session_string)
         status = SessionStatus.ACTIVE if active_slot is DeveloperSlot.PRIMARY else SessionStatus.STANDBY
-        self._uow.sessions.authorize_or_replace(account_id, active_slot, encrypted_session=encrypted, status=status)
-        if challenge.purpose == AuthPurpose.INITIAL_BIND.value:
-            self._create_initial_placeholders(account_id)
-        self._uow.accounts.update_profile(
-            account_id,
-            display_name=auth_session.display_name,
-            username=auth_session.username,
-        )
-        account = recompute_account_status(self._uow, account_id)
-        self._uow.commit()
-        return account
+        identity = _required_telegram_identity(auth_session.telegram_user_id)
+        with self._uow.telegram_identity_locks.acquire(identity):
+            self._require_available_telegram_identity(account_id, identity)
+            self._uow.accounts.update_telegram_identity(account_id, identity)
+            self._uow.sessions.authorize_or_replace(account_id, active_slot, encrypted_session=encrypted, status=status)
+            if challenge.purpose == AuthPurpose.INITIAL_BIND.value:
+                self._create_initial_placeholders(account_id)
+            self._uow.accounts.update_profile(
+                account_id,
+                display_name=auth_session.display_name,
+                username=auth_session.username,
+            )
+            account = recompute_account_status(self._uow, account_id)
+            self._uow.commit()
+            return account
+
+    def _require_available_telegram_identity(self, account_id: int, telegram_user_id: int) -> None:
+        existing = self._uow.accounts.get_by_telegram_identity(telegram_user_id)
+        if existing is not None and existing.id != account_id:
+            raise AuthFailure("bound_account_already_bound: 该 Telegram 账号已绑定到其他账号。", restart_required=True)
 
     def _create_initial_placeholders(self, account_id: int) -> None:
         for slot in (DeveloperSlot.STANDBY_1, DeveloperSlot.STANDBY_2):
@@ -298,6 +308,12 @@ def _is_usable_standby(row) -> bool:
         and row.status == SessionStatus.STANDBY.value
         and bool(row.encrypted_session)
     )
+
+
+def _required_telegram_identity(telegram_user_id: int) -> int:
+    if telegram_user_id <= 0:
+        raise AuthFailure("Telegram 未返回有效账号 identity，请重新开始绑定。", restart_required=True)
+    return telegram_user_id
 
 
 def _challenge_from_model(

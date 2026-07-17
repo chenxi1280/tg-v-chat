@@ -4,7 +4,7 @@ from datetime import datetime
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 
-from tg_v_chat.domain import IncomingPrivateBatch, IncomingPrivateMessage, MediaKind
+from tg_v_chat.domain import DeliveryFailure, IncomingPrivateBatch, IncomingPrivateMessage, MediaKind
 
 if TYPE_CHECKING:
     from tg_v_chat.telegram.private_listener.process import BoundListenerSession
@@ -44,6 +44,27 @@ async def async_private_message_from_event(
     )
 
 
+async def async_native_forward_message_from_event(
+    binding: BoundListenerSession,
+    event,
+    *,
+    sequence: int = 1,
+) -> IncomingPrivateMessage | None:
+    if _media_group_id(event.message) is not None:
+        return None
+    media_kind = _native_media_kind(event.message)
+    _validate_native_media(event.message, media_kind)
+    return _private_message_from_event(
+        binding,
+        event,
+        peer_access_hash=await _peer_access_hash(event),
+        sender_name=await _sender_name(event),
+        sent_at=_sent_at(event),
+        sequence=sequence,
+        media_kind=media_kind,
+    )
+
+
 async def async_private_batch_from_album(binding: BoundListenerSession, event, *, media_store) -> IncomingPrivateBatch:
     if not getattr(event, "is_private", False):
         raise RuntimeError("album event must be private")
@@ -60,6 +81,16 @@ async def async_private_batch_from_album(binding: BoundListenerSession, event, *
     return IncomingPrivateBatch(tuple(parsed))
 
 
+async def async_native_forward_batch_from_album(binding: BoundListenerSession, event) -> IncomingPrivateBatch:
+    if not getattr(event, "is_private", False):
+        raise RuntimeError("album event must be private")
+    messages = sorted(event.messages, key=lambda item: item.id)
+    parsed = []
+    for index, message in enumerate(messages, start=1):
+        parsed.append(await _native_album_item_from_message(binding, event, message, sequence=index))
+    return IncomingPrivateBatch(tuple(parsed))
+
+
 def _private_message_from_event(
     binding: BoundListenerSession,
     event,
@@ -69,6 +100,7 @@ def _private_message_from_event(
     sent_at: datetime | None,
     sequence: int = 1,
     artifacts=(),
+    media_kind: MediaKind | None = None,
 ) -> IncomingPrivateMessage:
     message = event.message
     return IncomingPrivateMessage(
@@ -76,7 +108,7 @@ def _private_message_from_event(
         peer_id=_peer_id(event),
         peer_access_hash=peer_access_hash,
         source_message_id=message.id,
-        media_kind=_media_kind(message),
+        media_kind=media_kind or _media_kind(message),
         payload=_payload(event),
         media_group_id=_media_group_id(message),
         sequence=sequence,
@@ -89,16 +121,7 @@ def _private_message_from_event(
 
 
 async def _album_item_from_message(binding, event, message, *, media_store, sequence: int):
-    item_event = SimpleNamespace(
-        chat_id=getattr(event, "chat_id", None) or getattr(event, "sender_id", None),
-        sender_id=getattr(event, "sender_id", None),
-        raw_text=getattr(message, "message", None) or getattr(event, "raw_text", None) or "",
-        input_chat=getattr(event, "input_chat", None),
-        input_sender=getattr(event, "input_sender", None),
-        message=message,
-        sender=getattr(event, "sender", None),
-        chat=getattr(event, "chat", None),
-    )
+    item_event = _album_item_event(event, message)
     artifacts = await _media_artifacts(message, media_store, sequence)
     return _private_message_from_event(
         binding,
@@ -108,6 +131,34 @@ async def _album_item_from_message(binding, event, message, *, media_store, sequ
         sent_at=_sent_at(item_event),
         sequence=sequence,
         artifacts=artifacts,
+    )
+
+
+async def _native_album_item_from_message(binding, event, message, *, sequence: int):
+    media_kind = _native_media_kind(message)
+    _validate_native_media(message, media_kind)
+    item_event = _album_item_event(event, message)
+    return _private_message_from_event(
+        binding,
+        item_event,
+        peer_access_hash=_peer_access_hash_from_attrs(event),
+        sender_name=_entity_name(getattr(event, "sender", None)),
+        sent_at=_sent_at(item_event),
+        sequence=sequence,
+        media_kind=media_kind,
+    )
+
+
+def _album_item_event(event, message):
+    return SimpleNamespace(
+        chat_id=getattr(event, "chat_id", None) or getattr(event, "sender_id", None),
+        sender_id=getattr(event, "sender_id", None),
+        raw_text=getattr(message, "message", None) or getattr(event, "raw_text", None) or "",
+        input_chat=getattr(event, "input_chat", None),
+        input_sender=getattr(event, "input_sender", None),
+        message=message,
+        sender=getattr(event, "sender", None),
+        chat=getattr(event, "chat", None),
     )
 
 
@@ -195,6 +246,27 @@ def _media_kind(message) -> MediaKind:
     if getattr(message, "sticker", None) is not None:
         return MediaKind.STICKER
     return MediaKind.TEXT
+
+
+def _native_media_kind(message) -> MediaKind:
+    if getattr(message, "photo", None) is not None:
+        return MediaKind.PHOTO
+    if getattr(message, "sticker", None) is not None:
+        return MediaKind.STICKER
+    if getattr(message, "video_note", None) is not None:
+        return MediaKind.VIDEO_NOTE
+    if getattr(message, "voice", None) is not None:
+        return MediaKind.VOICE
+    if getattr(message, "video", None) is not None:
+        return MediaKind.VIDEO
+    if getattr(message, "audio", None) is not None:
+        return MediaKind.AUDIO
+    return MediaKind.TEXT
+
+
+def _validate_native_media(message, media_kind: MediaKind) -> None:
+    if media_kind is MediaKind.TEXT and getattr(message, "media", None):
+        raise DeliveryFailure("native_forward_unsupported_media", "该媒体类型不支持原生转发")
 
 
 def _payload(event) -> str:

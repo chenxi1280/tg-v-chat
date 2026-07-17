@@ -2,6 +2,8 @@
 from tg_v_chat.telegram.private_listener.event_parsing import (
     async_private_batch_from_album,
     async_private_message_from_event,
+    async_native_forward_batch_from_album,
+    async_native_forward_message_from_event,
     private_message_from_event,
 )
 from tg_v_chat.telegram.private_listener.formatting import _format_push_message
@@ -16,6 +18,8 @@ __all__ = [
     "BoundListenerSession",
     "TelethonPrivateListenerProcess",
     "_format_push_message",
+    "async_native_forward_batch_from_album",
+    "async_native_forward_message_from_event",
     "async_private_batch_from_album",
     "async_private_message_from_event",
     "private_album_event_builder",

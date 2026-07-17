@@ -116,6 +116,19 @@ def test_gateway_from_client_schedules_media_send_on_owner_loop(tmp_path):
     asyncio.run(run())
 
 
+def test_gateway_notifies_failure_from_connected_bot_client(tmp_path):
+    async def run():
+        loop = asyncio.get_running_loop()
+        client = RecordingBotClient([700])
+        gateway = TelethonBotGateway.from_client(client, MediaStore(tmp_path), loop=loop)
+
+        await asyncio.to_thread(gateway.notify_failure, 1001, "native forward failed")
+
+        assert client.messages == [(1001, "native forward failed")]
+
+    asyncio.run(run())
+
+
 def test_successful_media_push_releases_artifact_file_and_metadata(tmp_path):
     factory = _factory()
     account_id = _seed_account(factory)

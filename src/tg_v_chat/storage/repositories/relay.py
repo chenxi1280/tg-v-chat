@@ -31,6 +31,7 @@ class RelayRepository:
     def create_or_get(self, message: IncomingPrivateMessage) -> tuple[RelayMessageModel, bool]:
         existing = self._session.query(RelayMessageModel).filter_by(
             bound_tg_account_id=message.bound_tg_account_id,
+            peer_id=message.peer_id,
             source_message_id=message.source_message_id,
         ).one_or_none()
         if existing:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
+
 from tg_v_chat.bot.account_management.constants import (
     ACCOUNT_STATUS_ACTIVE,
     HELP_TEXT,
@@ -44,6 +46,12 @@ from tg_v_chat.storage.repositories import UnitOfWork
 
 
 ACCOUNT_STATUS_DELETED = "deleted"
+
+
+def _account_identity_lock(uow, account):
+    if account.telegram_user_id is None:
+        return nullcontext()
+    return uow.telegram_identity_locks.acquire(account.telegram_user_id)
 
 
 class AccountManagementService:
@@ -165,9 +173,15 @@ class AccountManagementService:
                 if account.status == ACCOUNT_STATUS_DELETED:
                     response_text = "账号已删除。"
                     return BotResponse(response_text, buttons=_home_nav_buttons())
-                uow.accounts.mark_disabled(account_id)
-                uow.mappings.invalidate_for_account(account_id)
-                uow.commit()
+                with _account_identity_lock(uow, account):
+                    uow.accounts.mark_disabled(account_id)
+                    uow.native_forwards.cancel_active_for_account(
+                        account_id,
+                        "account_unavailable",
+                        "账号已禁用，取消原生转发批次",
+                    )
+                    uow.mappings.invalidate_for_account(account_id)
+                    uow.commit()
         return BotResponse(response_text, buttons=_home_nav_buttons())
 
     def delete_confirm(self, telegram_user_id: int, account_id: int) -> BotResponse:
@@ -184,8 +198,14 @@ class AccountManagementService:
                 uow.session.refresh(account)
                 if account.status == ACCOUNT_STATUS_DELETED:
                     return BotResponse("账号已删除。", buttons=_home_nav_buttons())
-                _delete_account_for_user(uow, user.id, account)
-                uow.commit()
+                with _account_identity_lock(uow, account):
+                    uow.native_forwards.cancel_active_for_account(
+                        account_id,
+                        "account_unavailable",
+                        "账号已删除，取消原生转发批次",
+                    )
+                    _delete_account_for_user(uow, user.id, account)
+                    uow.commit()
         return BotResponse("账号已删除。", buttons=_home_nav_buttons())
 
     def relogin(self, telegram_user_id: int, account_id: int) -> BotResponse:

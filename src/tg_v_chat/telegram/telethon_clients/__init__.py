@@ -2,6 +2,7 @@
 from tg_v_chat.telegram.telethon_clients.authenticator import SlotAuthenticatorRegistry, TelethonAuthenticator
 from tg_v_chat.telegram.telethon_clients.bot_process import TelethonBotProcess, _buttons
 from tg_v_chat.telegram.telethon_clients.config import DeveloperAppConfig
+from tg_v_chat.telegram.telethon_clients.forward_bridge import NativeForwardBridgeHandler
 from tg_v_chat.telegram.telethon_clients.gateway import (
     TelethonBotGateway,
     TelethonReplySender,
@@ -10,6 +11,7 @@ from tg_v_chat.telegram.telethon_clients.gateway import (
 
 __all__ = [
     "DeveloperAppConfig",
+    "NativeForwardBridgeHandler",
     "SlotAuthenticatorRegistry",
     "TelethonAuthenticator",
     "TelethonBotGateway",

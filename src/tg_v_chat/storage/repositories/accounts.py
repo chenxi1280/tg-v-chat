@@ -77,6 +77,30 @@ class AccountRepository:
         self._session.flush()
         return account
 
+    def update_telegram_identity(self, account_id: int, telegram_user_id: int) -> BoundTgAccountModel:
+        if telegram_user_id <= 0:
+            raise ValueError("telegram_user_id must be positive")
+        account = self.get(account_id)
+        account.telegram_user_id = telegram_user_id
+        self._session.flush()
+        return account
+
+    def list_operational_without_telegram_identity(self) -> list[BoundTgAccountModel]:
+        return (
+            self._session.query(BoundTgAccountModel)
+            .filter(BoundTgAccountModel.status.in_(("active", "degraded")))
+            .filter(BoundTgAccountModel.telegram_user_id.is_(None))
+            .order_by(BoundTgAccountModel.id.asc())
+            .all()
+        )
+
+    def get_by_telegram_identity(self, telegram_user_id: int) -> BoundTgAccountModel | None:
+        return (
+            self._session.query(BoundTgAccountModel)
+            .filter_by(telegram_user_id=telegram_user_id)
+            .one_or_none()
+        )
+
     def get(self, account_id: int) -> BoundTgAccountModel:
         account = self._session.get(BoundTgAccountModel, account_id)
         if not account:
@@ -116,6 +140,7 @@ class AccountRepository:
     def mark_deleted(self, account_id: int) -> BoundTgAccountModel:
         account = self.get(account_id)
         account.status = "deleted"
+        account.telegram_user_id = None
         self._session.flush()
         return account
 

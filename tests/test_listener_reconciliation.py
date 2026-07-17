@@ -11,6 +11,7 @@ from tg_v_chat.telegram.private_listener.process import (
     ListenerClientState,
     TelethonPrivateListenerProcess,
     _load_active_bindings,
+    _require_v2_identity_readiness,
 )
 
 
@@ -30,7 +31,7 @@ class Client:
         self.disconnected = True
 
 
-def _binding(account_id, slot_id=1, revision=1):
+def _binding(account_id, slot_id=1, revision=1, telegram_user_id=None):
     return BoundListenerSession(
         account_id,
         42,
@@ -41,6 +42,7 @@ def _binding(account_id, slot_id=1, revision=1):
         "session",
         slot_id=slot_id,
         session_revision=revision,
+        telegram_user_id=telegram_user_id,
     )
 
 
@@ -58,6 +60,83 @@ def test_listener_start_failure_isolated_per_account(monkeypatch):
     asyncio.run(process._sync_clients(object()))
 
     assert sorted(process._clients) == [2]
+
+
+def test_v2_listener_refuses_operational_account_without_telegram_identity(monkeypatch):
+    import tg_v_chat.telegram.private_listener.process as process_module
+
+    process = _process(monkeypatch, [_binding(1)])
+    process._native_forward_v2_enabled = True
+    process._bot_username = "relay_bot"
+    monkeypatch.setattr(process_module, "_require_v2_identity_readiness", lambda *_args: None)
+
+    with pytest.raises(RuntimeError, match="bound_account_identity_missing"):
+        asyncio.run(process._sync_clients(object()))
+
+
+def test_v2_readiness_checks_operational_accounts_without_listener_session():
+    factory = create_session_factory("sqlite:///:memory:")
+    init_db(factory)
+    with UnitOfWork(factory) as uow:
+        user = uow.users.get_or_create(42)
+        account = uow.accounts.create(user.id, "+15550000001")
+        uow.accounts.mark_active(account.id)
+        uow.commit()
+
+    with pytest.raises(RuntimeError, match=f"bound_account_identity_missing: {account.id}"):
+        _require_v2_identity_readiness(factory, "relay_bot")
+
+
+def test_v2_listener_runs_periodic_native_recovery(monkeypatch):
+    import tg_v_chat.telegram.private_listener.process as process_module
+
+    binding = _binding(1, telegram_user_id=7001)
+    process = _process(monkeypatch, [binding])
+    process._native_forward_v2_enabled = True
+    process._bot_username = "relay_bot"
+    process._clients[1] = ListenerClientState(Client("connected"), binding.fingerprint)
+    monkeypatch.setattr(process_module, "_require_v2_identity_readiness", lambda *_args: None)
+    monkeypatch.setattr(process_module, "_require_v2_binding_identities", lambda *_args: None)
+    calls = []
+
+    async def recover(bindings, gateway):
+        calls.append((bindings, gateway))
+
+    process._recover_v2_batches = recover
+    gateway = object()
+
+    asyncio.run(process._sync_clients(gateway))
+
+    assert calls == [([binding], gateway)]
+
+
+def test_v2_recovery_reconciles_and_dispatches_connected_accounts(monkeypatch):
+    import tg_v_chat.telegram.private_listener.process as process_module
+
+    binding = _binding(1, telegram_user_id=7001)
+    process = _process(monkeypatch, [binding])
+    process._native_forward_v2_enabled = True
+    process._bot_username = "relay_bot"
+    process._clients[1] = ListenerClientState(Client("connected"), binding.fingerprint)
+    calls = []
+    gateway = object()
+    monkeypatch.setattr(
+        process_module,
+        "_reconcile_native_forwards",
+        lambda session_factory, notifier: calls.append(("reconcile", session_factory, notifier)),
+    )
+    monkeypatch.setattr(
+        process_module,
+        "_dispatch_native_due",
+        lambda session_factory, account_id, forwarder, bridge_timeout_seconds, notifier: calls.append(
+            ("dispatch", session_factory, account_id, bridge_timeout_seconds, notifier, forwarder)
+        ),
+    )
+
+    asyncio.run(process._recover_v2_batches([binding], gateway))
+
+    assert calls[0] == ("reconcile", process._session_factory, gateway)
+    assert calls[1][0:5] == ("dispatch", process._session_factory, 1, 30, gateway)
 
 
 def test_listener_replaces_client_when_binding_fingerprint_changes(monkeypatch):

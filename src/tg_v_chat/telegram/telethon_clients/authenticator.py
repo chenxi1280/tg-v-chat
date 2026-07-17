@@ -116,9 +116,10 @@ class SlotAuthenticatorRegistry:
 async def _authenticated_session(client) -> AuthenticatedSession:
     me = await client.get_me()
     return AuthenticatedSession(
-        client.session.save(),
-        _display_name(me),
-        getattr(me, "username", None),
+        session_string=client.session.save(),
+        telegram_user_id=_telegram_user_id(me),
+        display_name=_display_name(me),
+        username=getattr(me, "username", None),
     )
 
 
@@ -128,3 +129,10 @@ def _display_name(user) -> str | None:
     parts = [getattr(user, "first_name", None), getattr(user, "last_name", None)]
     name = " ".join(part for part in parts if part)
     return name or getattr(user, "username", None)
+
+
+def _telegram_user_id(user) -> int:
+    telegram_user_id = getattr(user, "id", None)
+    if not isinstance(telegram_user_id, int) or telegram_user_id <= 0:
+        raise AuthFailure("Telegram 未返回有效账号 identity，请重新开始绑定。", restart_required=True)
+    return telegram_user_id

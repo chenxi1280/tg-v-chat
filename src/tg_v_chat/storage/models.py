@@ -36,10 +36,12 @@ class BotConversationStateModel(Base):
 
 class BoundTgAccountModel(Base):
     __tablename__ = "bound_tg_accounts"
+    __table_args__ = (UniqueConstraint("telegram_user_id", name="uq_bound_tg_account_telegram_user_id"),)
 
     id = Column(Integer, primary_key=True)
     system_user_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
     phone_number = Column(String(64), nullable=False)
+    telegram_user_id = Column(BigInteger, nullable=True)
     display_name = Column(Text, nullable=True)
     username = Column(String(64), nullable=True)
     status = Column(String(32), nullable=False, default="binding")
@@ -80,7 +82,14 @@ class AuthChallengeModel(Base):
 
 class RelayMessageModel(Base):
     __tablename__ = "relay_messages"
-    __table_args__ = (UniqueConstraint("bound_tg_account_id", "source_message_id"),)
+    __table_args__ = (
+        UniqueConstraint(
+            "bound_tg_account_id",
+            "peer_id",
+            "source_message_id",
+            name="uq_relay_message_account_peer_source",
+        ),
+    )
 
     id = Column(Integer, primary_key=True)
     bound_tg_account_id = Column(Integer, ForeignKey("bound_tg_accounts.id"), nullable=False)
@@ -94,6 +103,101 @@ class RelayMessageModel(Base):
     media_group_id = Column(String(255), nullable=True)
     sequence = Column(Integer, nullable=False, default=0)
     status = Column(String(32), nullable=False, default="received")
+
+
+class NativeForwardBatchModel(Base):
+    __tablename__ = "native_forward_batches"
+    __table_args__ = (
+        UniqueConstraint("marker_token", name="uq_native_forward_batch_marker_token"),
+        CheckConstraint("expected_count >= 0 AND expected_count <= 100", name="ck_native_forward_batch_count"),
+        CheckConstraint(
+            "status IN ('collecting', 'sealed', 'bridge_sending', 'awaiting_bot', 'final_sending', 'sent', 'failed', 'uncertain')",
+            name="ck_native_forward_batch_status",
+        ),
+    )
+    STATUSES = (
+        "collecting",
+        "sealed",
+        "bridge_sending",
+        "awaiting_bot",
+        "final_sending",
+        "sent",
+        "failed",
+        "uncertain",
+    )
+
+    id = Column(Integer, primary_key=True)
+    system_user_id = Column(Integer, ForeignKey("system_users.id"), nullable=False)
+    bound_tg_account_id = Column(Integer, ForeignKey("bound_tg_accounts.id"), nullable=False)
+    bridge_sender_telegram_user_id = Column(BigInteger, nullable=False)
+    source_peer_id = Column(BigInteger, nullable=False)
+    source_peer_access_hash = Column(BigInteger, nullable=True)
+    marker_token = Column(String(128), nullable=False)
+    expected_count = Column(Integer, nullable=False, default=0)
+    status = Column(String(32), nullable=False, default="collecting")
+    collect_until = Column(DateTime(timezone=True), nullable=False)
+    bridge_deadline_at = Column(DateTime(timezone=True), nullable=True)
+    first_hop_marker_message_id = Column(Integer, nullable=True)
+    header_bot_message_id = Column(Integer, nullable=True)
+    failure_code = Column(String(64), nullable=True)
+    failure_reason = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
+class NativeForwardItemModel(Base):
+    __tablename__ = "native_forward_items"
+    __table_args__ = (
+        UniqueConstraint("batch_id", "batch_sequence", name="uq_native_forward_item_batch_sequence"),
+        UniqueConstraint("relay_message_id", name="uq_native_forward_item_relay"),
+        UniqueConstraint(
+            "bridge_sender_telegram_user_id",
+            "bridge_message_id",
+            name="uq_native_forward_item_bridge_message",
+        ),
+        UniqueConstraint(
+            "bridge_sender_telegram_user_id",
+            "expected_bridge_message_id",
+            name="uq_native_forward_item_expected_bridge_message",
+        ),
+        UniqueConstraint("bot_push_message_id", name="uq_native_forward_item_push"),
+        CheckConstraint(
+            "status IN ('pending', 'bridged', 'sent', 'failed', 'uncertain')",
+            name="ck_native_forward_item_status",
+        ),
+        CheckConstraint(
+            "identity_visibility IS NULL OR identity_visibility IN ('linked', 'name_only')",
+            name="ck_native_forward_item_identity_visibility",
+        ),
+    )
+    STATUSES = ("pending", "bridged", "sent", "failed", "uncertain")
+
+    id = Column(Integer, primary_key=True)
+    batch_id = Column(Integer, ForeignKey("native_forward_batches.id"), nullable=False)
+    relay_message_id = Column(Integer, ForeignKey("relay_messages.id"), nullable=False)
+    batch_sequence = Column(Integer, nullable=False)
+    bridge_sender_telegram_user_id = Column(BigInteger, nullable=False)
+    expected_bridge_message_id = Column(Integer, nullable=True)
+    bridge_message_id = Column(Integer, nullable=True)
+    bot_push_message_id = Column(Integer, ForeignKey("bot_push_messages.id"), nullable=True)
+    final_bot_message_id = Column(Integer, nullable=True)
+    identity_visibility = Column(String(32), nullable=True)
+    status = Column(String(32), nullable=False, default="pending")
+    failure_code = Column(String(64), nullable=True)
+    failure_reason = Column(Text, nullable=True)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
+    updated_at = Column(DateTime(timezone=True), nullable=False, default=utc_now, onupdate=utc_now)
+
+
+class NativeForwardBridgeQuarantineModel(Base):
+    __tablename__ = "native_forward_bridge_quarantines"
+
+    id = Column(Integer, primary_key=True)
+    sender_telegram_user_id = Column(BigInteger, nullable=False)
+    bot_message_id = Column(Integer, nullable=False)
+    marker_token = Column(String(128), nullable=True)
+    failure_code = Column(String(64), nullable=False)
+    created_at = Column(DateTime(timezone=True), nullable=False, default=utc_now)
 
 
 class BotPushMessageModel(Base):

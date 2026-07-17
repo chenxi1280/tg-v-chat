@@ -20,6 +20,13 @@ VALIDATION_MESSAGE_IDS = {
     "relay-hardening-worker",
     "relay-hardening-role-health",
     "relay-hardening-scope",
+    "native-forward-identity-gate",
+    "native-forward-batch-sequence",
+    "native-forward-bridge-isolation",
+    "native-forward-first-hop-liveness",
+    "native-forward-final-ledger",
+    "native-forward-telethon-contract",
+    "native-forward-777000",
 }
 FORBIDDEN_CONTRACTS = {
     "time TTL introduced": r"(?<!no )(?<!not )\btime(?:-based)? ttl is (?!not\b)(?:introduced|enabled|implemented)\b",
@@ -184,6 +191,48 @@ def test_dataflow_freezes_durable_dispatch_and_media_spool() -> None:
     )
 
 
+def test_native_forward_v2_truth_sources_freeze_bridge_contracts() -> None:
+    documents = "\n".join(
+        _read(path)
+        for path in (
+            "docs/product/native-forward-relay-v2.md",
+            "docs/superpowers/specs/2026-07-17-native-forward-relay-design.md",
+            "docs/index/dataflow.md",
+            "docs/product/product-index.md",
+            "docs/qa/validation-plan.md",
+        )
+    )
+
+    _assert_contracts(
+        documents,
+        (
+            "tg_v_chat_native_forward_v2_enabled",
+            "telegram_user_id",
+            "batch_sequence",
+            "bridge_deadline_at",
+            "nativeforwardbridgequarantine",
+            "telethon>=1.34,<2",
+            "777000",
+            "e4 unproven",
+        ),
+    )
+
+
+def test_native_forward_design_freezes_exact_bridge_item_contracts() -> None:
+    document = _read("docs/superpowers/specs/2026-07-17-native-forward-relay-design.md")
+
+    _assert_contracts(
+        document,
+        (
+            "bridge_sender_telegram_user_id",
+            "expected_bridge_message_id",
+            "UNIQUE(bridge_sender_telegram_user_id, bridge_message_id)",
+            "UNIQUE(bridge_sender_telegram_user_id, expected_bridge_message_id)",
+            "bridge_item_mismatch",
+        ),
+    )
+
+
 def test_validation_matrix_has_rows_and_evidence_boundary() -> None:
     document = _read("docs/qa/validation-plan.md")
     matrix_rows = _table_rows(_section(document, "## validation matrix"))
@@ -208,6 +257,8 @@ def test_truth_sources_reject_opposite_contracts() -> None:
         "docs/product/product-index.md",
         "docs/index/dataflow.md",
         "docs/qa/validation-plan.md",
+        "docs/product/native-forward-relay-v2.md",
+        "docs/superpowers/specs/2026-07-17-native-forward-relay-design.md",
     )
     document = "\n".join(_read(path) for path in truth_sources)
 
