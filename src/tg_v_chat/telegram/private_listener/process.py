@@ -138,15 +138,20 @@ class TelethonPrivateListenerProcess:
         if not await client.is_user_authorized():
             await client.disconnect()
             raise RuntimeError(f"TG 账号未授权，无法监听: {binding.phone_number}")
-        self._register_listener_handlers(client, binding, bot_gateway)
+        try:
+            await self._register_listener_handlers(client, binding, bot_gateway)
+        except BaseException:
+            await client.disconnect()
+            raise
         _schedule_bound_account_identity_sync(client, binding, self._session_factory)
         print(f"tg-v-chat listener connected account {binding.account_id} {binding.developer_slot}")
         return client
 
-    def _register_listener_handlers(self, client, binding, bot_gateway) -> None:
+    async def _register_listener_handlers(self, client, binding, bot_gateway) -> None:
         if not self._native_forward_v2_enabled:
             _register_v1_handlers(client, binding, self._session_factory, bot_gateway, self._media_store)
             return
+        product_bot = await client.get_entity(f"@{self._bot_username}")
         forwarder = TelethonUserSessionForwarder(client, self._bot_username, loop=asyncio.get_running_loop())
         _register_v2_handlers(
             client,
@@ -155,6 +160,7 @@ class TelethonPrivateListenerProcess:
             forwarder,
             self._native_forward_bridge_timeout_seconds,
             bot_gateway,
+            bot_telegram_user_id=int(product_bot.id),
         )
 
     async def _recover_v2_batches(self, bindings: list[BoundListenerSession], notifier) -> None:
@@ -217,13 +223,36 @@ def _register_v1_handlers(client, binding, session_factory, bot_gateway, media_s
     )
 
 
-def _register_v2_handlers(client, binding, session_factory, forwarder, bridge_timeout_seconds: int, notifier) -> None:
+def _register_v2_handlers(
+    client,
+    binding,
+    session_factory,
+    forwarder,
+    bridge_timeout_seconds: int,
+    notifier,
+    *,
+    bot_telegram_user_id: int,
+) -> None:
     client.add_event_handler(
-        _native_incoming_handler(binding, session_factory, forwarder, bridge_timeout_seconds, notifier),
+        _native_incoming_handler(
+            binding,
+            session_factory,
+            forwarder,
+            bridge_timeout_seconds,
+            notifier,
+            bot_telegram_user_id=bot_telegram_user_id,
+        ),
         private_message_event_builder(),
     )
     client.add_event_handler(
-        _native_album_handler(binding, session_factory, forwarder, bridge_timeout_seconds, notifier),
+        _native_album_handler(
+            binding,
+            session_factory,
+            forwarder,
+            bridge_timeout_seconds,
+            notifier,
+            bot_telegram_user_id=bot_telegram_user_id,
+        ),
         private_album_event_builder(),
     )
 
@@ -250,9 +279,17 @@ def _album_handler(binding: BoundListenerSession, session_factory, bot_gateway: 
     return handle
 
 
-def _native_incoming_handler(binding, session_factory, forwarder, bridge_timeout_seconds: int, notifier):
+def _native_incoming_handler(
+    binding,
+    session_factory,
+    forwarder,
+    bridge_timeout_seconds: int,
+    notifier,
+    *,
+    bot_telegram_user_id: int,
+):
     async def handle(event) -> None:
-        if not getattr(event, "is_private", False):
+        if not getattr(event, "is_private", False) or _is_product_bot_event(event, bot_telegram_user_id):
             return
         message = await async_native_forward_message_from_event(binding, event)
         if message is None:
@@ -271,9 +308,17 @@ def _native_incoming_handler(binding, session_factory, forwarder, bridge_timeout
     return handle
 
 
-def _native_album_handler(binding, session_factory, forwarder, bridge_timeout_seconds: int, notifier):
+def _native_album_handler(
+    binding,
+    session_factory,
+    forwarder,
+    bridge_timeout_seconds: int,
+    notifier,
+    *,
+    bot_telegram_user_id: int,
+):
     async def handle(event) -> None:
-        if not getattr(event, "is_private", False):
+        if not getattr(event, "is_private", False) or _is_product_bot_event(event, bot_telegram_user_id):
             return
         batch = await async_native_forward_batch_from_album(binding, event)
         await asyncio.to_thread(_receive_native_batch, session_factory, batch)
@@ -287,6 +332,10 @@ def _native_album_handler(binding, session_factory, forwarder, bridge_timeout_se
         )
 
     return handle
+
+
+def _is_product_bot_event(event, bot_telegram_user_id: int) -> bool:
+    return getattr(event, "sender_id", None) == bot_telegram_user_id
 
 
 def _receive_message(session_factory, bot_gateway: TelethonBotGateway, message: IncomingPrivateMessage, *, media_store) -> None:

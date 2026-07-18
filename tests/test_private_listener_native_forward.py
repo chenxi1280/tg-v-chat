@@ -8,6 +8,7 @@ from tg_v_chat.telegram.private_listener.event_parsing import (
     async_native_forward_batch_from_album,
     async_native_forward_message_from_event,
 )
+from tg_v_chat.telegram.private_listener import process
 from tg_v_chat.telegram.private_listener.process import BoundListenerSession
 
 
@@ -84,3 +85,37 @@ def test_native_parser_rejects_unsupported_media_without_copy_fallback():
 
     with pytest.raises(DeliveryFailure, match="native_forward_unsupported_media"):
         asyncio.run(async_native_forward_message_from_event(_binding(), _event(message)))
+
+
+def test_native_handler_ignores_messages_from_product_bot(monkeypatch):
+    async def parsing_must_not_run(*_args, **_kwargs):
+        raise AssertionError("product Bot message must not enter the V2 collector")
+
+    monkeypatch.setattr(process, "async_native_forward_message_from_event", parsing_must_not_run)
+    handler = process._native_incoming_handler(
+        _binding(),
+        object(),
+        object(),
+        30,
+        object(),
+        bot_telegram_user_id=9001,
+    )
+
+    asyncio.run(handler(SimpleNamespace(is_private=True, sender_id=9001)))
+
+
+def test_native_album_handler_ignores_messages_from_product_bot(monkeypatch):
+    async def parsing_must_not_run(*_args, **_kwargs):
+        raise AssertionError("product Bot album must not enter the V2 collector")
+
+    monkeypatch.setattr(process, "async_native_forward_batch_from_album", parsing_must_not_run)
+    handler = process._native_album_handler(
+        _binding(),
+        object(),
+        object(),
+        30,
+        object(),
+        bot_telegram_user_id=9001,
+    )
+
+    asyncio.run(handler(SimpleNamespace(is_private=True, sender_id=9001)))

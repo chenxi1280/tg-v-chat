@@ -4,6 +4,8 @@ from datetime import datetime, timezone
 from types import ModuleType
 from types import SimpleNamespace
 
+import pytest
+
 from tg_v_chat.domain import DeveloperSlot, MediaKind
 from tg_v_chat.storage.database import create_session_factory, init_db
 from tg_v_chat.storage.repositories import UnitOfWork
@@ -207,6 +209,49 @@ def test_listener_registers_handler_when_identity_sync_fails(monkeypatch):
     client = asyncio.run(process._start_user_client(binding, object()))
 
     assert len(client.handlers) == 2
+
+
+def test_listener_disconnects_client_when_v2_bot_resolution_fails(monkeypatch):
+    class FakeClient:
+        instance = None
+
+        def __init__(self, _session, _api_id, _api_hash):
+            self.disconnect_calls = 0
+            type(self).instance = self
+
+        async def connect(self):
+            return None
+
+        async def is_user_authorized(self):
+            return True
+
+        async def get_entity(self, _username):
+            raise RuntimeError("bot lookup failed")
+
+        async def disconnect(self):
+            self.disconnect_calls += 1
+
+    telethon = ModuleType("telethon")
+    telethon.TelegramClient = FakeClient
+    sessions = ModuleType("telethon.sessions")
+    sessions.StringSession = lambda value=None: value
+    monkeypatch.setitem(sys.modules, "telethon", telethon)
+    monkeypatch.setitem(sys.modules, "telethon.sessions", sessions)
+
+    process = TelethonPrivateListenerProcess(
+        {DeveloperSlot.PRIMARY: DeveloperAppConfig(1, "hash")},
+        "bot-token",
+        object(),
+        session_cipher=object(),
+        native_forward_v2_enabled=True,
+        bot_username="relay_bot",
+    )
+    binding = BoundListenerSession(7, 42, "+19525920433", None, None, "primary", "session")
+
+    with pytest.raises(RuntimeError, match="bot lookup failed"):
+        asyncio.run(process._start_user_client(binding, object()))
+
+    assert FakeClient.instance.disconnect_calls == 1
 
 
 def test_push_message_display_shows_sender_recipient_username_content_and_time():

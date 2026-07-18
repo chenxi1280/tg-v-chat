@@ -148,6 +148,7 @@ Telegram 原生转发头可能包含可点击的原发送者，也可能因原�
 4. Bot 按 `batch_sequence` 的已验证 bridge_message_id 调用批量 `forward_messages` 到 SystemUser。
 5. 返回条数必须等于批次条数。相等时逐条把 BotPushMessage 标记 sent、写 NativeForwardItem 的 final bot message id，并创建 ReplyMapping；不足、传输未知或远端成功后本地提交失败时，保留预创建账本并把 item 和批次标记 `uncertain`。
 6. 所有最终结果持久化后，批次才进入 `sent`。`uncertain` 不自动重放；人工核对后才能补录观察到的最终 message id 和 ReplyMapping。
+7. listener 必须按已解析的产品 Bot Telegram user id 忽略 Bot -> SystemUser 的最终转发和失败通知；这些入站消息不是新的源私聊，禁止再次进入第一跳，避免回流。
 
 ## 9. 状态与一致性
 
