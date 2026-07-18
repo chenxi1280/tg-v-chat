@@ -128,6 +128,23 @@ def test_bridge_consumes_marker_and_writes_each_final_reply_mapping():
         assert uow.mappings.get_by_bot_message(user_id, 802).source_message_id == 12
 
 
+def test_bridge_uses_bot_dialog_ids_when_they_differ_from_first_hop_ids():
+    factory = _factory()
+    batch = _prepared_batch(factory)
+    client = BotClient()
+    handler = NativeForwardBridgeHandler(factory)
+    marker = marker_text(SimpleNamespace(marker_token=batch.marker_token, expected_count=2))
+
+    asyncio.run(handler.handle_message(_event(client, 1500, text=marker)))
+    asyncio.run(handler.handle_message(_event(client, 1601, forwarded=True)))
+    asyncio.run(handler.handle_message(_event(client, 1602, forwarded=True)))
+
+    assert client.calls[1] == ("forward", 1001, (1601, 1602), 7001)
+    with UnitOfWork(factory) as uow:
+        assert uow.native_forwards.get(batch.id).status == "sent"
+        assert [item.bridge_message_id for item in uow.native_forwards.list_items(batch.id)] == [1601, 1602]
+
+
 def test_known_bound_sender_orphan_forward_is_quarantined_not_routed():
     factory = _factory()
     _prepared_batch(factory)
@@ -142,27 +159,23 @@ def test_known_bound_sender_orphan_forward_is_quarantined_not_routed():
         assert "payload" not in quarantine.__table__.columns
 
 
-def test_forwarded_message_not_returned_by_first_hop_is_quarantined_not_attached():
+def test_duplicate_bot_dialog_message_is_idempotent():
     factory = _factory()
     batch = _prepared_batch(factory)
-    with UnitOfWork(factory) as uow:
-        uow.native_forwards.record_first_hop_result(
-            batch.id,
-            marker_message_id=500,
-            bridge_message_ids=(601, 602),
-        )
-        uow.commit()
-
     handler = NativeForwardBridgeHandler(factory)
+    client = BotClient()
     marker = marker_text(SimpleNamespace(marker_token=batch.marker_token, expected_count=2))
-    asyncio.run(handler.handle_message(_event(BotClient(), 500, text=marker)))
+    asyncio.run(handler.handle_message(_event(client, 1500, text=marker)))
+    asyncio.run(handler.handle_message(_event(client, 1601, forwarded=True)))
+    asyncio.run(handler.handle_message(_event(client, 1601, forwarded=True)))
 
-    assert asyncio.run(handler.handle_message(_event(BotClient(), 699, forwarded=True))) is True
+    assert client.calls == []
+    asyncio.run(handler.handle_message(_event(client, 1602, forwarded=True)))
+
+    assert client.calls[1] == ("forward", 1001, (1601, 1602), 7001)
     with UnitOfWork(factory) as uow:
-        stored = uow.native_forwards.get(batch.id)
-        assert stored.status == "awaiting_bot"
-        assert all(item.bridge_message_id is None for item in uow.native_forwards.list_items(batch.id))
-        assert uow.session.query(NativeForwardBridgeQuarantineModel).one().failure_code == "bridge_item_mismatch"
+        assert uow.native_forwards.get(batch.id).status == "sent"
+        assert uow.session.query(NativeForwardBridgeQuarantineModel).count() == 0
 
 
 def test_prepare_final_commits_account_unavailable_failure():

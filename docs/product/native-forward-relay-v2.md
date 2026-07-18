@@ -8,6 +8,8 @@
 - production_verification_required: true
 
 > 2026-07-17 实现修订：本版本已完成本地 E3 验证，覆盖批次顺序、绑定账号身份唯一性、桥接超时、Bot 端串行消费、最终投递账本和显式灰度启用合同。在线 PostgreSQL integration、GitHub Actions 发布和真实 Telegram E4 仍未取证。
+>
+> 2026-07-18 协议修订：同一条第一跳消息在 BoundTgAccount user session 与 Bot 私聊中可具有不同的 Telegram message id。因此第一跳返回 id 仅作发送侧审计，Bot 必须在有效 marker 后按 Bot 私聊 message id 顺序写入实际 bridge message id，不能跨会话做 id 等值匹配。
 
 ## 1. 背景与问题
 
@@ -136,13 +138,13 @@ Telegram 原生转发头可能包含可点击的原发送者，也可能因原�
 
 1. 仅当 `TG_V_CHAT_NATIVE_FORWARD_V2_ENABLED=true`、`TG_V_CHAT_BOT_USERNAME` 已配置，且 BoundTgAccount 已有唯一的 `telegram_user_id` 时，持久化 ForwardBridgeMarker token、expected_count、`bridge_deadline_at` 和批次关系；默认开关为 `false`。
 2. BoundTgAccount user session 按真实 `telegram_user_id` 串行，先向产品 Bot 发送 marker，再使用 `forward_messages` 按 `batch_sequence` 升序转发原消息。
-3. 第一跳远端调用前把批次置为 `bridge_sending`。adapter 必须返回 marker message id 和实际转入 Bot 对话的有序 message id 列表；服务在释放 sender lock 前逐项持久化为 item 的 `expected_bridge_message_id`。实际数量、唯一性或既有结果不匹配时进入 `uncertain`，不等待 Bot 猜测缺失项。
+3. 第一跳远端调用前把批次置为 `bridge_sending`。adapter 必须返回 marker message id 和发送侧看到的有序 message id 列表；服务在释放 sender lock 前逐项持久化为 item 的 `expected_bridge_message_id`，仅作为第一跳审计。实际数量、唯一性或既有结果不匹配时进入 `uncertain`，不等待 Bot 猜测缺失项。
 4. Bot 收到 marker 后，在同一 sender 串行锁内置 `awaiting_bot`。同一 sender 的 marker、普通 bridge item 和 album item 必须使用同一个持久化锁顺序处理。
-5. 已知 BoundTgAccount sender 发来的 marker 格式错误、未知 token、没有 active marker 的 forwarded message，或不等于当前批次 `expected_bridge_message_id` 的 forwarded message，一律进入 bridge quarantine，禁止进入账号管理或 Bot reply router；非桥接普通用户消息才继续走现有 router。
+5. 已知 BoundTgAccount sender 发来的 marker 格式错误、未知 token，或没有 active marker 的 forwarded message，一律进入 bridge quarantine，禁止进入账号管理或 Bot reply router。marker 有效后，同一 sender 在同一锁内收到的后续 `expected_count` 条 forwarded message 按 Bot 私聊 message id 顺序归入该批次；非桥接普通用户消息才继续走现有 router。
 
 ### 8.3 第二跳：Bot -> SystemUser
 
-1. Bot 按 marker 收集后续原生转发消息时，必须以 `bridge_sender_telegram_user_id + expected_bridge_message_id` 精确命中 item，再按 `batch_sequence` 记录 Bot 侧 bridge_message_id；Telegram `message_id` 只在该 Bot 私聊内唯一，不能跨绑定账号全局去重，也不能按“下一条”猜测归属。
+1. Bot 按 marker 收集后续原生转发消息时，必须在同一 `bridge_sender_telegram_user_id` 锁内收集并按 Bot 私聊 message id 顺序写入未桥接 item 的 `bridge_message_id`。Telegram `message_id` 只在所属消息框内唯一，不能把 user session 返回的 id 与 Bot 收到的 id 做等值匹配；同一 Bot 私聊 message id 重复投递必须幂等处理。
 2. 收齐后，先为每个 item 创建并 claim `BotPushMessage(pending -> sending)`；不得在最终 Telegram RPC 成功后才创建投递账本。
 3. Bot 发送并持久化接收账号批次说明的 message id；它不创建 ReplyMapping。若其后第二跳失败，必须把该批次说明更新或补发为明确失败/uncertain 状态，不能留下看似成功的孤立说明。
 4. Bot 按 `batch_sequence` 的已验证 bridge_message_id 调用批量 `forward_messages` 到 SystemUser。
@@ -176,7 +178,6 @@ collecting -> sealed -> bridge_sending -> awaiting_bot -> final_sending -> sent
 | native_forward_source_missing | 原消息已删除或 source_message_id 不存在 | failed |
 | bridge_marker_mismatch | token、sender 或 expected_count 不匹配 | 写 NativeForwardBridgeQuarantine，禁止进入普通 router |
 | bridge_orphan_forward | 已知绑定账号 sender 发送了没有 active marker 的 forwarded message | 写 NativeForwardBridgeQuarantine，禁止进入普通 router |
-| bridge_item_mismatch | 已知绑定账号 sender 的 forwarded message 不等于当前批次第一跳已持久化的 expected bridge message id | 写 NativeForwardBridgeQuarantine，保持原批次等待其预期 item |
 | bridge_item_count_mismatch | Bot 收到或最终返回条数不一致 | uncertain |
 | bridge_timeout | bridge_sending、awaiting_bot 或 final_sending 超过 `bridge_deadline_at` | uncertain，通知 SystemUser，不自动重放 |
 | bridge_transport_unknown | 任一跳网络结果未知 | uncertain |
@@ -190,7 +191,7 @@ collecting -> sealed -> bridge_sending -> awaiting_bot -> final_sending -> sent
 - BoundTgAccount 持久化授权账号自己的 `telegram_user_id`，供 marker sender 校验；该值来自授权 session 的 `get_me()`，不从名称或手机号推断，并对非空值建立全局唯一约束。授权完成先原子写入该值再激活账号；删除/解除原绑定后释放该值。重复账号必须先解除原绑定，不能共享或并行监听。
 - NativeForwardBatch 持久化 owner、bound account、source peer、状态、expected_count、token、`bridge_deadline_at`、批次说明 bot message id、failure code/reason 和时间戳。
 - RelayMessage 的入站幂等键为 `bound_tg_account_id + peer_id + source_message_id`；不同 PrivateChatPeer 相同的 message id 必须分别保留。
-- NativeForwardItem 持久化 relay_message_id、唯一的 `batch_sequence`、所属 Bot 私聊 sender、第一跳返回的 `expected_bridge_message_id`、bridge_message_id、final bot_message_id、关联的 BotPushMessage 和状态。实际和预期 bridge id 均以 sender/private-chat scope 唯一。
+- NativeForwardItem 持久化 relay_message_id、唯一的 `batch_sequence`、所属 Bot 私聊 sender、第一跳发送侧审计 id `expected_bridge_message_id`、Bot 私聊实际 `bridge_message_id`、final bot_message_id、关联的 BotPushMessage 和状态。两类 id 分属不同消息框，禁止跨会话做相等性判断；Bot 实际 bridge id 以 sender/private-chat scope 唯一。
 - NativeForwardBridgeQuarantine 只持久化 sender Telegram user id、Bot message id、可选 marker token、failure code 和时间戳；不持久化原私聊正文或媒体。
 - 最终 `bot_message_id` 仍按 `system_user_id + bot_message_id` 唯一；不得假设不同 Telegram 账号看到的私聊 message id 相同。
 - V2 开关默认关闭。迁移后先由 listener 对 active/degraded 账号执行 `get_me()` 回填，处理重复归属，配置 `TG_V_CHAT_BOT_USERNAME`，再以完整率检查作为唯一启用前置条件；任何一项未完成都不得启用 V2。
@@ -215,7 +216,7 @@ collecting -> sealed -> bridge_sending -> awaiting_bot -> final_sending -> sent
 16. 默认 V2 开关关闭；只有存量 `telegram_user_id` 回填、唯一性检查和 `TG_V_CHAT_BOT_USERNAME` 配置完成后才可显式启用。关闭时继续既有 V1 路径，启用后单条失败不得降级复制。
 17. 重启后 sealed 批次可恢复；sending、超时和 uncertain 批次不自动重放。
 18. 本地 E3、GitHub Actions 发布和真实生产 E4 证据分别汇报。
-19. 两个 BoundTgAccount 的 Bot 私聊使用相同 message id 时，两个 item 都正确归属各自 sender；任何不在第一跳返回 id 列表内的 forwarded message 只写 quarantine，绝不创建 ReplyMapping。
+19. 第一跳发送侧 id 与 Bot 私聊收到 id 不同时，仍按有效 marker 后的 Bot 私聊 message id 顺序正确归属每个 item；同一 Bot 私聊 message id 的重复投递幂等；没有 active marker 的 forwarded message 只写 quarantine，绝不创建 ReplyMapping。
 20. 新授权账号在 V2 listener 启动前已持久化真实 `telegram_user_id`；删除后同一真实账号可重新绑定；最终转发前账号不可用时批次持久化为 failed，不遗留 awaiting_bot。
 
 ## 13. 外部协议依据

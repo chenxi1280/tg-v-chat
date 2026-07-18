@@ -5,7 +5,6 @@ from types import SimpleNamespace
 
 from tg_v_chat.domain import DeliveryFailure, DeliveryUncertain
 from tg_v_chat.storage.repositories import UnitOfWork
-from tg_v_chat.storage.repositories.native_forward import BridgeItemMismatchError
 from tg_v_chat.telegram.native_forward_protocol import is_marker_candidate, parse_marker
 
 
@@ -100,9 +99,6 @@ class NativeForwardBridgeHandler:
                     message.id,
                     _identity_visibility(message),
                 )
-            except BridgeItemMismatchError:
-                uow.commit()
-                return _BridgeReceive(active.marker_token, False, "bridge_item_mismatch")
             except ValueError:
                 uow.native_forwards.mark_uncertain(
                     active.id,

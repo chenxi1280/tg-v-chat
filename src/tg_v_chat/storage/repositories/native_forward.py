@@ -33,10 +33,6 @@ class BridgeItemAppend:
     complete: bool
 
 
-class BridgeItemMismatchError(ValueError):
-    pass
-
-
 class NativeForwardRepository:
     def __init__(self, session):
         self._session = session
@@ -191,16 +187,22 @@ class NativeForwardRepository:
         batch = self.find_active_bridge(sender_telegram_user_id)
         if batch is None:
             raise LookupError("native forward bridge is not awaiting items")
-        item = self._expected_bridge_item(sender_telegram_user_id, bridge_message_id)
-        if item is None or item.batch_id != batch.id:
-            raise BridgeItemMismatchError("native forward bridge message id is not expected by the active batch")
-        if item.bridge_message_id is not None:
+        item = self._bridge_item_by_message(sender_telegram_user_id, bridge_message_id)
+        if item is not None:
+            if item.batch_id != batch.id:
+                raise ValueError("native forward bridge message belongs to another batch")
             return BridgeItemAppend(batch, item, True, self._bridge_complete(batch))
+        item = self._next_unbridged_item(batch.id)
+        if item is None:
+            raise ValueError("native forward bridge has no unbridged item")
         item.bridge_message_id = bridge_message_id
         item.identity_visibility = identity_visibility
         item.status = "bridged"
         self._session.flush()
-        return BridgeItemAppend(batch, item, False, self._bridge_complete(batch))
+        complete = self._bridge_complete(batch)
+        if complete:
+            self._order_bridged_items(batch.id)
+        return BridgeItemAppend(batch, item, False, complete)
 
     def claim_final(self, marker_token: str) -> NativeForwardBatchModel | None:
         batch = self.get_by_marker(marker_token)
@@ -332,15 +334,34 @@ class NativeForwardRepository:
             is not None
         )
 
-    def _expected_bridge_item(self, sender_telegram_user_id: int, bridge_message_id: int) -> NativeForwardItemModel | None:
+    def _bridge_item_by_message(self, sender_telegram_user_id: int, bridge_message_id: int) -> NativeForwardItemModel | None:
         return (
             self._session.query(NativeForwardItemModel)
             .filter_by(
                 bridge_sender_telegram_user_id=sender_telegram_user_id,
-                expected_bridge_message_id=bridge_message_id,
+                bridge_message_id=bridge_message_id,
             )
             .one_or_none()
         )
+
+    def _next_unbridged_item(self, batch_id: int) -> NativeForwardItemModel | None:
+        return (
+            self._session.query(NativeForwardItemModel)
+            .filter_by(batch_id=batch_id, bridge_message_id=None)
+            .order_by(NativeForwardItemModel.batch_sequence.asc())
+            .first()
+        )
+
+    def _order_bridged_items(self, batch_id: int) -> None:
+        items = self.list_items(batch_id)
+        received = sorted((item.bridge_message_id, item.identity_visibility) for item in items)
+        for item in items:
+            item.bridge_message_id = None
+        self._session.flush()
+        for item, (bridge_message_id, identity_visibility) in zip(items, received):
+            item.bridge_message_id = bridge_message_id
+            item.identity_visibility = identity_visibility
+        self._session.flush()
 
     def _bridge_complete(self, batch: NativeForwardBatchModel) -> bool:
         bridged_count = (
