@@ -225,10 +225,9 @@ def test_native_forward_design_freezes_exact_bridge_item_contracts() -> None:
         document,
         (
             "bridge_sender_telegram_user_id",
-            "expected_bridge_message_id",
+            "FirstHopForwardResult(forwarded_count)",
             "UNIQUE(bridge_sender_telegram_user_id, bridge_message_id)",
-            "UNIQUE(bridge_sender_telegram_user_id, expected_bridge_message_id)",
-            "bridge_item_mismatch",
+            "不持久化第一跳发送侧的 marker 或 item message id",
         ),
     )
 

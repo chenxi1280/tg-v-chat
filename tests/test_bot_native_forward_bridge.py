@@ -91,11 +91,6 @@ def _prepared_batch(factory, *, marker="marker-token"):
             uow.native_forwards.append_item(batch.id, relay.id)
         uow.native_forwards.seal(batch.id)
         uow.native_forwards.claim_bridge(batch.id, now + timedelta(seconds=30))
-        uow.native_forwards.record_first_hop_result(
-            batch.id,
-            marker_message_id=500,
-            bridge_message_ids=(601, 602),
-        )
         uow.commit()
         return batch
 

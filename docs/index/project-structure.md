@@ -4,7 +4,7 @@
 
 - project_path: `/Users/xida/PycharmProjects/tg-v-chat`
 - initialized_at: `2026-06-28`
-- last_dev_update: `2026-07-17`
+- last_dev_update: `2026-07-18`
 - detected_runtime: Python 3.11+
 - git_repository: present
 - implementation_status: native_forward_v2_implemented_e3_passed_e4_unproven
@@ -30,7 +30,7 @@
 | Runtime process | `src/tg_v_chat/runtime.py` | dev | Role-based bot/listener/worker process entrypoint with stale heartbeat cleanup |
 | Storage bootstrap | `src/tg_v_chat/storage/database.py` | dev | SQLAlchemy engine/session factory; runtime requires PostgreSQL unless tests opt in to SQLite |
 | Media store | `src/tg_v_chat/telegram/media_store.py` | dev | Owner-only shared file spool for incoming/outgoing Telegram media artifacts |
-| Migrations | `migrations/versions/0001_initial_private_relay.py` ... `migrations/versions/0011_scope_native_forward_bridge_items.py` | dev | Alembic schema migrations; production must not rely on `Base.metadata.create_all` |
+| Migrations | `migrations/versions/0001_initial_private_relay.py` ... `migrations/versions/0012_remove_native_forward_sender_side_ids.py` | dev | Alembic schema migrations; production must not rely on `Base.metadata.create_all` |
 | CI release workflow | `.github/workflows/deploy-production.yml` | dev | release branch and manual trigger; PostgreSQL service, Alembic migration, pytest, GHCR image, SSH compose deploy |
 | Server compose | `docker-compose.server.yml` | dev | Uses infra-compose PostgreSQL via `infra_default`; defines migrate, root-only media-volume initialization, bot, listener, worker services, shared media volume, and role healthchecks |
 | Container image | `Dockerfile` | dev | Installs the application and creates the appuser-owned `0700` role-heartbeat directory before dropping privileges |
@@ -83,7 +83,7 @@ Single-file modules that exceeded the maintainability threshold were split into 
 | `dispatch.py` | `PushRepository`, `OutgoingReplyRepository`, durable dispatch claim/terminal transitions |
 | `failover.py` | `FailoverRepository` (session failover events) |
 | `media.py` | `MediaArtifactRepository`, `MediaGroupRepository`, artifact lifecycle and album dispatch metadata |
-| `native_forward.py` | `NativeForwardRepository`, atomic batch order, sender-scoped expected/actual bridge item persistence, final push claims, terminal state, and quarantine audit |
+| `native_forward.py` | `NativeForwardRepository`, atomic batch order, sender-scoped Bot-dialog bridge item persistence, final push claims, terminal state, and quarantine audit |
 | `locks.py` | `AccountOperationLock`, `TelegramIdentityLock`, database-backed per-account/real-Telegram-identity operation locking |
 | `unit_of_work.py` | `UnitOfWork` aggregating every repository |
 
@@ -156,7 +156,7 @@ The former 490-line account-management test was split by scenario into four focu
 | RelayMediaArtifact | `relay_media_artifacts` | incoming/outgoing file artifact metadata, status, release evidence |
 | RelayMediaGroup | `relay_media_groups` | album dispatch metadata and terminal state |
 | NativeForwardBatch | `native_forward_batches` | V2 collecting/sealed/bridge/final lifecycle, marker token, peer, deadline, header result, and terminal evidence |
-| NativeForwardItem | `native_forward_items` | Per-relay V2 `batch_sequence`, sender-scoped expected/actual bridge ids, final message id, final BotPushMessage linkage, identity visibility, and terminal evidence |
+| NativeForwardItem | `native_forward_items` | Per-relay V2 `batch_sequence`, sender-scoped Bot-dialog bridge id, final message id, final BotPushMessage linkage, identity visibility, and terminal evidence |
 | NativeForwardBridgeQuarantine | `native_forward_bridge_quarantines` | Known bridge sender’s malformed/orphan audit without private message content or media |
 
 ## Test And Verification Entrypoints
@@ -192,7 +192,7 @@ The former 490-line account-management test was split by scenario into four focu
 - `runtime --role bot` starts a real Telethon Bot process instead of building dependencies and sleeping.
 - Account Management Bot Flow PRD is complete and E3-tested for `/start`, `/admin`, bind button, phone/code/2FA wizard, account identity display, account detail, disable confirmation, callback handling, and reply passthrough.
 - Module split (2026-06-29): `storage/repositories.py`, `bot/account_management.py`, `telegram/telethon_clients.py`, and `telegram/private_listener.py` were split into subpackages; the former account-management monolith test was split into 4 scenario files plus shared helpers. All external import paths are preserved via `__init__.py` re-exports. Current source audit finds no file over 500 lines, no function over 50 lines, and no block nesting deeper than 3.
-- Native Forward V2 local E3 verification (2026-07-17): full pytest is `249 passed, 8 skipped`; the skipped tests require `TG_V_CHAT_TEST_DATABASE_URL` for online PostgreSQL evidence. `compileall`, PostgreSQL offline migration SQL generation, and `docker compose ... config` also pass. This is not GitHub Actions, online PostgreSQL integration, or Telegram E4 evidence.
+- Native Forward V2 direct-ID upgrade local E3 verification (2026-07-18): full pytest is `265 passed, 8 skipped`; the skipped tests require `TG_V_CHAT_TEST_DATABASE_URL` for online PostgreSQL evidence. `compileall`, PostgreSQL offline migration SQL generation, and `docker compose ... config` also pass. This is not GitHub Actions, online PostgreSQL integration, or Telegram E4 evidence.
 
 ## Known Limits Before Production
 

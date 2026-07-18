@@ -141,7 +141,7 @@ def test_first_hop_count_mismatch_becomes_uncertain():
         uow.native_forwards.seal(first.batch.id)
         uow.commit()
 
-    forwarder = Forwarder(FirstHopForwardResult(501, (601,)))
+    forwarder = Forwarder(FirstHopForwardResult(1))
     dispatcher = NativeForwardDispatchService(factory, forwarder, bridge_timeout_seconds=30, now=clock.now)
 
     dispatcher.dispatch(first.batch.id)
@@ -153,11 +153,48 @@ def test_first_hop_count_mismatch_becomes_uncertain():
         assert batch.failure_code == "bridge_item_count_mismatch"
 
 
+def test_first_hop_keeps_bot_marker_when_bot_receives_it_before_rpc_returns():
+    factory = _factory()
+    account = _account(factory)
+    clock = Clock()
+    with UnitOfWork(factory) as uow:
+        received = NativeForwardCollector(uow, token_factory=lambda: "marker-1").ingest(
+            _message(account.id, 11),
+            now=clock.now(),
+        )
+        uow.native_forwards.seal(received.batch.id)
+        uow.commit()
+
+    class MarkerFirstForwarder:
+        def forward_batch(self, request):
+            with UnitOfWork(factory) as uow:
+                batch = uow.native_forwards.mark_awaiting_bot(
+                    request.marker_token,
+                    7001,
+                    marker_message_id=1600,
+                )
+                assert batch is not None
+                uow.commit()
+            return FirstHopForwardResult(forwarded_count=request.expected_count)
+
+    NativeForwardDispatchService(
+        factory,
+        MarkerFirstForwarder(),
+        bridge_timeout_seconds=30,
+        now=clock.now,
+    ).dispatch(received.batch.id)
+
+    with UnitOfWork(factory) as uow:
+        batch = uow.native_forwards.get(received.batch.id)
+        assert batch.status == "awaiting_bot"
+        assert batch.first_hop_marker_message_id == 1600
+
+
 def test_dispatch_due_seals_batches_inside_the_collector_account_lock(monkeypatch):
     factory = _factory()
     dispatcher = NativeForwardDispatchService(
         factory,
-        Forwarder(FirstHopForwardResult(501, (601,))),
+        Forwarder(FirstHopForwardResult(1)),
         bridge_timeout_seconds=30,
     )
     acquired = []

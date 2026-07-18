@@ -52,7 +52,7 @@ Bot 不能直接转发它从未收到且无权访问的绑定账号私聊；因�
 
 - `TelethonUserSessionForwarder`：在已连接的 BoundTgAccount client 上先 `send_message(marker)`，再 `forward_messages`。
 - 使用 `TG_V_CHAT_BOT_USERNAME` 在该 user session 内解析目标 Bot peer；不得从 Bot token 推断 username，也不得把 Bot session 的 access hash 交给 user session。
-- 返回 `FirstHopForwardResult(marker_message_id, bridge_message_ids)`，调用方必须校验 `len(bridge_message_ids) == expected_count`。
+- 返回 `FirstHopForwardResult(forwarded_count)`，调用方必须校验 `forwarded_count == expected_count`；不返回或持久化发送侧的 marker/item message id。
 - 使用 listener 已有的 source peer access hash；不把账号 A 的 access hash 交给 Bot 账号使用。
 - 同一真实 `telegram_user_id` 同时只允许一个 `bridge_sending` 批次；锁使用 PostgreSQL advisory lock，不能只按 BoundTgAccount 主键。
 - photo、video、video_note、audio、voice、sticker 只记录 source_message_id 和媒体类型，不下载或重新上传媒体。
@@ -113,7 +113,6 @@ batch_id FK NOT NULL
 relay_message_id FK UNIQUE NOT NULL
 batch_sequence INTEGER NOT NULL
 bridge_sender_telegram_user_id BIGINT NOT NULL
-expected_bridge_message_id INTEGER NULL
 bridge_message_id INTEGER NULL
 bot_push_message_id FK NULL
 final_bot_message_id INTEGER NULL
@@ -121,10 +120,9 @@ identity_visibility VARCHAR(32) NULL
 status VARCHAR(32) NOT NULL
 UNIQUE(batch_id, batch_sequence)
 UNIQUE(bridge_sender_telegram_user_id, bridge_message_id)
-UNIQUE(bridge_sender_telegram_user_id, expected_bridge_message_id)
 ```
 
-`batch_sequence` 是批次展示顺序，始终从 1 开始递增；它与 RelayMessage 的 album/media `sequence` 没有任何复用关系。第一跳 RPC 成功后，按其返回列表顺序先把每一条 item 的 `expected_bridge_message_id` 持久化；Bot 端只能用 `(bridge_sender_telegram_user_id, expected_bridge_message_id)` 精确命中 item，再写实际收到的 `bridge_message_id`。Telegram message id 仅在发送者与 Bot 的私聊内唯一，不能全局唯一，也不能按“下一条”推断归属。
+`batch_sequence` 是批次展示顺序，始终从 1 开始递增；它与 RelayMessage 的 album/media `sequence` 没有任何复用关系。第一跳 RPC 只确认 `forwarded_count`；不持久化第一跳发送侧的 marker 或 item message id。有效 marker 后，Bot 端按同一 sender 的 Bot 私聊 message id 顺序把消息写入未 bridge 的 item，并把实际收到的 `bridge_message_id` 作为唯一关联键。Telegram message id 仅在所属私聊内唯一，不能跨会话比较。
 
 状态约束：`pending, bridged, sent, failed, uncertain`。
 
@@ -139,7 +137,7 @@ failure_code VARCHAR(64) NOT NULL
 created_at TIMESTAMPTZ NOT NULL
 ```
 
-该表是路由隔离审计，不保存原私聊正文、caption 或媒体。它覆盖 `bridge_marker_mismatch`、`bridge_orphan_forward` 和 `bridge_item_mismatch`，使错误 bridge 输入既可追踪，又不会被普通 Bot 输入流消费。
+该表是路由隔离审计，不保存原私聊正文、caption 或媒体。它覆盖 `bridge_marker_mismatch`、`bridge_orphan_forward` 和 `bridge_item_count_mismatch`，使错误 bridge 输入既可追踪，又不会被普通 Bot 输入流消费。
 
 ### 既有 `bot_push_messages` 与 `reply_mappings`
 
@@ -167,9 +165,9 @@ tgvc-forward-v2:{marker_token}:{expected_count}
 - marker_token 使用随机 URL-safe token，并预先持久化。
 - dispatch 在 `sealed -> bridge_sending` 前计算并保存 `bridge_deadline_at = now + TG_V_CHAT_NATIVE_FORWARD_BRIDGE_TIMEOUT_SECONDS`。
 - marker handler 在 sender lock 内验证 token、sender、状态和 count，成功后转为 `awaiting_bot`。
-- 第一跳完成后服务必须在 sender lock 内核对返回 id 的数量与唯一性，并为每个 `batch_sequence` 持久化 `expected_bridge_message_id`；不匹配则立即进入 `uncertain`。
-- item handler 只消费同一 sender 且 `expected_bridge_message_id` 与实际 Bot 私聊 message id 相等的 active batch item；无法精确命中的 item 不能改变批次状态。
-- 已知绑定 sender 的未知/错误 marker、orphan forwarded message 或不等于预期 id 的 forwarded item 必须以 `bridge_item_mismatch` 写入 `native_forward_bridge_quarantines`，不能落入普通 router。非绑定 sender 的普通消息维持现有行为。
+- 第一跳完成后服务必须在 sender lock 内核对 `forwarded_count`；不匹配则立即进入 `uncertain`，不会写入发送侧的 message id。
+- item handler 在有效 marker 后只消费同一 sender 的 active batch，按 Bot 私聊 message id 顺序写入下一个未 bridge item；重复 Bot 私聊 message id 必须幂等。
+- 已知绑定 sender 的未知/错误 marker、orphan forwarded message 或超过批次条数的 forwarded item 必须写入 `native_forward_bridge_quarantines`，不能落入普通 router。非绑定 sender 的普通消息维持现有行为。
 - marker、bridge item 和 batch header 都不创建 ReplyMapping。
 
 ## 两跳结果处理
@@ -177,7 +175,7 @@ tgvc-forward-v2:{marker_token}:{expected_count}
 ### 第一跳
 
 1. `sealed -> bridge_sending` 和 `bridge_deadline_at` 在 RPC 前提交。
-2. adapter 先发送 marker，再按 `batch_sequence` 递增的 source id 转发，返回实际 bridge message ids；服务按返回列表顺序逐条写入 item 的 `expected_bridge_message_id`，并将该 id 视为 Bot 私聊中的精确关联键。
+2. adapter 先发送 marker，再按 `batch_sequence` 递增的 source id 转发，只返回 `forwarded_count`；Bot 私聊收到 marker 后按其实际 message id 建立批次关联，后续 Bot 私聊 item id 才是持久化关联键。
 3. 明确的 protected/missing/peer 错误在确认未产生远端副作用时进入 failed。
 4. 连接中断、超时、成功后无法持久化、或返回数量不等于 expected_count 时进入 uncertain。
 5. reconciliation 发现 deadline 已过的 `bridge_sending`、`awaiting_bot` 或 `final_sending` 时进入 `bridge_timeout` / uncertain，通知 SystemUser，不重发。
@@ -187,7 +185,7 @@ tgvc-forward-v2:{marker_token}:{expected_count}
 1. 收齐 expected_count 后，在 sender lock 内 CAS `awaiting_bot -> final_sending`。
 2. 先为全部 item 创建并 claim `BotPushMessage`；任一预创建/claim 失败时不发第二跳。
 3. Bot 发送批次说明并持久化 `header_bot_message_id`。说明初始文案表明“正在转发”；失败/uncertain 时必须编辑该说明或发送明确终态通知。
-4. 对按 `batch_sequence` 排序、已精确验证的 bridge_message_id 调用 `forward_messages`。
+4. 对按 `batch_sequence` 排序、已由 Bot 私聊实际消息持久化的 `bridge_message_id` 调用 `forward_messages`。
 5. 结果数量相等时，按 batch_sequence 成对持久化 final bot message id、BotPushMessage sent、NativeForwardItem sent 和 ReplyMapping，再转 batch sent。
 6. 数量不足、传输未知、远端成功后本地提交失败时，把已有预创建 push/item/batch 标记 uncertain；不自动补发、复制或猜测 message id。人工 reconciliation 只能在核对真实 Bot 对话后补录确认结果。
 
@@ -197,7 +195,7 @@ tgvc-forward-v2:{marker_token}:{expected_count}
 | --- | --- | --- | --- |
 | 远端明确拒绝且无副作用 | failed | 批次说明显示失败 code | 不重试、不复制 |
 | 第一跳/第二跳数量不一致 | uncertain | 批次说明显示 `bridge_item_count_mismatch` | 不重试 |
-| 第一跳返回 id 重复或 Bot item 不等于预期 id | uncertain / quarantined | `bridge_item_count_mismatch` 或 `bridge_item_mismatch` | 不重试、不串批 |
+| 第一跳返回条数不等于 expected_count | uncertain | `bridge_item_count_mismatch` | 不重试、不串批 |
 | bridge deadline 到期 | uncertain | 批次说明显示 `bridge_timeout` | 不重试 |
 | 已知 sender 的错误 bridge 输入 | quarantined | 写无内容隔离审计，不进入普通 Bot 流程 | 不转发 |
 | 远端成功后本地提交失败 | uncertain | 批次说明显示需要人工核对 | 不重试 |
@@ -221,6 +219,6 @@ tgvc-forward-v2:{marker_token}:{expected_count}
 
 ## 发布门槛
 
-- E3：本地 SQLite 单测、PostgreSQL migration SQL 生成、compileall 和 compose config 必须通过；在线 PostgreSQL integration 仅在提供测试数据库时另行取证，不能由 SQL 生成替代。2026-07-17 本地 E3 已通过；覆盖普通多消息 sequence、跨账号同 id 隔离、第一跳预期 id 精确关联、重复账号拒绝、授权 identity 落库、删除后重绑、Bot username 缺失、marker/update race、桥接超时、第一跳数量不一致、预创建 push、账号不可用终态提交、远端成功后 DB 失败、`777000` contract 和 feature-gate 回填。
+- E3：本地 SQLite 单测、PostgreSQL migration SQL 生成、compileall 和 compose config 必须通过；在线 PostgreSQL integration 仅在提供测试数据库时另行取证，不能由 SQL 生成替代。2026-07-18 本地 E3 已通过；覆盖普通多消息 sequence、跨账号同 id 隔离、第一跳 forwarded_count、Bot marker 先到、Bot 私聊 id 顺序归属、重复账号拒绝、授权 identity 落库、删除后重绑、Bot username 缺失、桥接超时、第一跳数量不一致、预创建 push、账号不可用终态提交、远端成功后 DB 失败、`777000` contract 和 feature-gate 回填。
 - 发布：`master -> release -> GitHub Actions Deploy Production`。
 - E4：真实账号验证 linked、name_only、三条普通文本批次、photo/video 混合相册、video_note、audio、voice、逐条回复、protected failure、marker timeout、重启 uncertain、重复账号拒绝、V2 启用前完整率检查，以及隔离测试账号上的 `777000` 原始 code 流程。缺任一项都不得宣称生产完成。

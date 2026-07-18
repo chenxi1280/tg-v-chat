@@ -25,7 +25,7 @@ class UserSessionForwarder:
 
     def forward_batch(self, request):
         self.requests.append(request)
-        return FirstHopForwardResult(500, tuple(range(601, 601 + request.expected_count)))
+        return FirstHopForwardResult(request.expected_count)
 
 
 class BotClient:

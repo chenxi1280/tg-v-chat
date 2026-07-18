@@ -32,9 +32,9 @@ This file is the product-side index for requirements, business objects, permissi
 | BotConversationState | home, awaiting_phone, awaiting_code, awaiting_password, account_detail | 归属 SystemUser；只能驱动自己的绑定流程 | TG Bot binding wizard | bot state resolver, auth flow | 每个 SystemUser 同时只能有一个主动绑定向导。 |
 | AuthChallenge | code_required, password_required, complete, cancelled, expired | 归属 SystemUser 的 BoundTgAccount | TG Bot binding wizard | auth service, Telegram authenticator | 手机号、验证码、2FA 分步授权状态。 |
 | NativeForwardBatch | collecting, sealed, bridge_sending, awaiting_bot, final_sending, sent, failed, uncertain | 归属 SystemUser 和 BoundTgAccount | TG Bot native relay | listener collector, Bot forward bridge, reconciliation service | 同一账号、同一 peer 的两跳原生转发批次；不跨 peer 合并。bridge 以真实 `telegram_user_id` 串行，并有 deadline，超时进入 uncertain；账号禁用/删除会在同一 identity lock 内终止非终态批次，避免重建 ReplyMapping。 |
-| NativeForwardItem | pending, bridged, sent, failed, uncertain | 归属 NativeForwardBatch | TG Bot native relay | Bot forward bridge, ReplyMapping writer | 一条 RelayMessage 对应一个最终 Bot message id；`batch_sequence` 是批次内唯一顺序，不能复用媒体 sequence；第一跳 expected bridge id 和实际 bridge id 按 Bot sender/private-chat scope 精确匹配。 |
+| NativeForwardItem | pending, bridged, sent, failed, uncertain | 归属 NativeForwardBatch | TG Bot native relay | Bot forward bridge, ReplyMapping writer | 一条 RelayMessage 对应一个最终 Bot message id；`batch_sequence` 是批次内唯一顺序，不能复用媒体 sequence；第一跳只确认条数，实际 `bridge_message_id` 按 Bot sender/private-chat scope 唯一持久化。 |
 | ForwardBridgeMarker | pending, received, consumed | 归属 NativeForwardBatch | none | user-session forwarder, Bot forward bridge | token、sender、count 三项均匹配才能激活。 |
-| NativeForwardBridgeQuarantine | recorded | 系统内部审计；不创建用户回复映射 | none | Bot forward bridge, QA, ops | 已知绑定账号 sender 的错误 marker、orphan 或 expected-id 不匹配 forwarded item 只记录 sender、Bot message id、token 和 failure code，不保存原内容，且绝不进入普通 Bot router。 |
+| NativeForwardBridgeQuarantine | recorded | 系统内部审计；不创建用户回复映射 | none | Bot forward bridge, QA, ops | 已知绑定账号 sender 的错误 marker、orphan 或超过批次条数的 forwarded item 只记录 sender、Bot message id、token 和 failure code，不保存原内容，且绝不进入普通 Bot router。 |
 
 ## Acceptance Contracts
 

@@ -96,8 +96,7 @@ class NativeForwardRequest:
 
 @dataclass(frozen=True)
 class FirstHopForwardResult:
-    marker_message_id: int
-    bridge_message_ids: tuple[int, ...]
+    forwarded_count: int
 
 
 class UserSessionForwarder(Protocol):

@@ -1,6 +1,6 @@
 import pytest
 
-from tg_v_chat.domain import DeliveryFailure, NativeForwardRequest, TelegramPeer
+from tg_v_chat.domain import DeliveryFailure, DeliveryUncertain, NativeForwardRequest, TelegramPeer
 from tg_v_chat.telegram.private_listener.native_forward import (
     TelethonUserSessionForwarder,
     _forward_error,
@@ -36,8 +36,7 @@ def test_user_session_resolves_configured_bot_and_forwards_original_ids():
 
     result = forwarder.forward_batch(_request())
 
-    assert result.marker_message_id == 501
-    assert result.bridge_message_ids == (601, 602)
+    assert result.forwarded_count == 2
     assert client.calls[0] == ("resolve", "@relay_bot")
     assert client.calls[1] == ("marker", "bot-peer", marker_text(_request()))
     assert client.calls[2][0:3] == ("forward", "bot-peer", (11, 12))
@@ -50,6 +49,17 @@ def test_user_session_refuses_missing_source_access_hash_without_copy_fallback()
 
     with pytest.raises(DeliveryFailure, match="native_forward_peer_invalid"):
         forwarder.forward_batch(_request(TelegramPeer(88)))
+
+
+def test_user_session_marks_missing_forward_result_uncertain():
+    class MissingResultClient(Client):
+        async def forward_messages(self, _target, _message_ids, *, from_peer):
+            return None
+
+    forwarder = TelethonUserSessionForwarder(MissingResultClient(), "relay_bot")
+
+    with pytest.raises(DeliveryUncertain, match="bridge_transport_unknown"):
+        forwarder.forward_batch(_request())
 
 
 def test_bridge_marker_has_a_parseable_fixed_contract():

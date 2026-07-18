@@ -128,29 +128,6 @@ class NativeForwardRepository:
         self._session.flush()
         return batch
 
-    def record_first_hop_result(
-        self,
-        batch_id: int,
-        *,
-        marker_message_id: int,
-        bridge_message_ids: tuple[int, ...],
-    ) -> NativeForwardBatchModel:
-        batch = self._batch_for_update(batch_id)
-        if batch.status in ("collecting", "sealed"):
-            raise ValueError(f"native forward batch has no active first hop: {batch.status}")
-        if batch.first_hop_marker_message_id not in (None, marker_message_id):
-            raise ValueError("native forward marker message id mismatch")
-        items = self.list_items(batch.id)
-        if len(items) != len(bridge_message_ids) or len(set(bridge_message_ids)) != len(bridge_message_ids):
-            raise ValueError("native forward bridge item ids do not match the batch")
-        for item, bridge_message_id in zip(items, bridge_message_ids):
-            if item.expected_bridge_message_id not in (None, bridge_message_id):
-                raise ValueError("native forward bridge item id mismatch")
-            item.expected_bridge_message_id = bridge_message_id
-        batch.first_hop_marker_message_id = marker_message_id
-        self._session.flush()
-        return batch
-
     def mark_awaiting_bot(
         self,
         marker_token: str,

@@ -31,7 +31,7 @@ class TelethonUserSessionForwarder:
         source_peer = _source_peer(request)
         try:
             bot_peer = await self._client.get_input_entity(f"@{self._bot_username}")
-            marker = await self._client.send_message(bot_peer, marker_text(request))
+            await self._client.send_message(bot_peer, marker_text(request))
             forwarded = await self._client.forward_messages(
                 bot_peer,
                 list(request.source_message_ids),
@@ -41,7 +41,7 @@ class TelethonUserSessionForwarder:
             raise
         except Exception as exc:
             raise _forward_error(exc) from exc
-        return FirstHopForwardResult(marker.id, _message_ids(forwarded))
+        return FirstHopForwardResult(_forwarded_count(forwarded))
 
 
 def _source_peer(request: NativeForwardRequest):
@@ -52,10 +52,12 @@ def _source_peer(request: NativeForwardRequest):
     return InputPeerUser(request.source_peer.id, request.source_peer.access_hash)
 
 
-def _message_ids(messages) -> tuple[int, ...]:
+def _forwarded_count(messages) -> int:
     if not isinstance(messages, (list, tuple)):
         messages = (messages,)
-    return tuple(int(message.id) for message in messages)
+    if not messages or any(getattr(message, "id", None) is None for message in messages):
+        raise DeliveryUncertain("bridge_transport_unknown", "第一跳未返回可确认的转发消息")
+    return len(messages)
 
 
 def _forward_error(error: Exception) -> DeliveryFailure | DeliveryUncertain:

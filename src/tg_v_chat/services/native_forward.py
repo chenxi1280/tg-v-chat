@@ -177,26 +177,13 @@ class NativeForwardDispatchService:
         except DeliveryUncertain as exc:
             self._mark_terminal(request.batch_id, "uncertain", exc.code, exc.detail)
             raise
-        if len(result.bridge_message_ids) != request.expected_count or len(set(result.bridge_message_ids)) != len(
-            result.bridge_message_ids
-        ):
+        if result.forwarded_count != request.expected_count:
             self._mark_terminal(
                 request.batch_id,
                 "uncertain",
                 "bridge_item_count_mismatch",
                 "第一跳返回消息数量与批次不一致",
             )
-            return result
-        try:
-            with UnitOfWork(self._session_factory) as uow:
-                uow.native_forwards.record_first_hop_result(
-                    request.batch_id,
-                    marker_message_id=result.marker_message_id,
-                    bridge_message_ids=result.bridge_message_ids,
-                )
-                uow.commit()
-        except ValueError as exc:
-            self._mark_terminal(request.batch_id, "uncertain", "bridge_marker_mismatch", str(exc))
         return result
 
     def _mark_terminal(self, batch_id: int, status: str, code: str, detail: str) -> None:

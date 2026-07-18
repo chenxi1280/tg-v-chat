@@ -155,11 +155,6 @@ class NativeForwardItemModel(Base):
             "bridge_message_id",
             name="uq_native_forward_item_bridge_message",
         ),
-        UniqueConstraint(
-            "bridge_sender_telegram_user_id",
-            "expected_bridge_message_id",
-            name="uq_native_forward_item_expected_bridge_message",
-        ),
         UniqueConstraint("bot_push_message_id", name="uq_native_forward_item_push"),
         CheckConstraint(
             "status IN ('pending', 'bridged', 'sent', 'failed', 'uncertain')",
@@ -177,7 +172,6 @@ class NativeForwardItemModel(Base):
     relay_message_id = Column(Integer, ForeignKey("relay_messages.id"), nullable=False)
     batch_sequence = Column(Integer, nullable=False)
     bridge_sender_telegram_user_id = Column(BigInteger, nullable=False)
-    expected_bridge_message_id = Column(Integer, nullable=True)
     bridge_message_id = Column(Integer, nullable=True)
     bot_push_message_id = Column(Integer, ForeignKey("bot_push_messages.id"), nullable=True)
     final_bot_message_id = Column(Integer, nullable=True)

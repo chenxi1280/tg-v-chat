@@ -8,6 +8,7 @@ from tg_v_chat.storage.models import (
     NativeForwardItemModel,
 )
 from tg_v_chat.storage.repositories import UnitOfWork
+from tg_v_chat.storage.repositories.native_forward import NativeForwardRepository
 
 
 def _now() -> datetime:
@@ -53,7 +54,6 @@ def test_native_forward_models_keep_batch_order_and_private_quarantine_boundary(
     assert _column_names(NativeForwardItemModel) >= {
         "batch_sequence",
         "bridge_sender_telegram_user_id",
-        "expected_bridge_message_id",
         "bridge_message_id",
         "bot_push_message_id",
         "final_bot_message_id",
@@ -66,6 +66,11 @@ def test_native_forward_models_keep_batch_order_and_private_quarantine_boundary(
         "failure_code",
         "created_at",
     }
+
+
+def test_native_forward_v2_does_not_keep_sender_side_message_id_ledger():
+    assert "expected_bridge_message_id" not in _column_names(NativeForwardItemModel)
+    assert not hasattr(NativeForwardRepository, "record_first_hop_result")
 
 
 def test_append_assigns_batch_sequence_not_relay_media_sequence():
@@ -101,11 +106,6 @@ def test_final_pushes_are_created_and_claimed_before_final_forward():
         uow.native_forwards.append_item(batch.id, second.id)
         uow.native_forwards.seal(batch.id)
         uow.native_forwards.claim_bridge(batch.id, _now() + timedelta(seconds=30))
-        uow.native_forwards.record_first_hop_result(
-            batch.id,
-            marker_message_id=900,
-            bridge_message_ids=(901, 902),
-        )
         uow.native_forwards.mark_awaiting_bot("marker-1", 7001, marker_message_id=900)
         uow.native_forwards.append_bridge_message(7001, 901, "linked")
         uow.native_forwards.append_bridge_message(7001, 902, "name_only")
@@ -118,23 +118,18 @@ def test_final_pushes_are_created_and_claimed_before_final_forward():
         assert [push.dispatch_key for push in pushes] == [f"push:{first.id}", f"push:{second.id}"]
 
 
-def test_first_hop_result_persists_expected_item_ids_before_bot_consumes_items():
+def test_bot_marker_id_is_persisted_when_bot_consumes_the_marker():
     factory = _factory()
     with UnitOfWork(factory) as uow:
         _user, _account, batch, first, _second = _batch_with_two_relays(uow)
         uow.native_forwards.append_item(batch.id, first.id)
         uow.native_forwards.seal(batch.id)
         uow.native_forwards.claim_bridge(batch.id, _now() + timedelta(seconds=30))
-        stored = uow.native_forwards.record_first_hop_result(
-            batch.id,
-            marker_message_id=900,
-            bridge_message_ids=(901,),
-        )
-        uow.native_forwards.mark_awaiting_bot("marker-1", 7001, marker_message_id=900)
+        stored = uow.native_forwards.mark_awaiting_bot("marker-1", 7001, marker_message_id=900)
 
         assert stored.status == "awaiting_bot"
         assert stored.first_hop_marker_message_id == 900
-        assert uow.native_forwards.list_items(batch.id)[0].expected_bridge_message_id == 901
+        assert uow.native_forwards.list_items(batch.id)[0].bridge_message_id is None
 
 
 def test_expired_final_sending_batch_becomes_uncertain_without_replay():
@@ -146,11 +141,6 @@ def test_expired_final_sending_batch_becomes_uncertain_without_replay():
         uow.native_forwards.append_item(batch.id, second.id)
         uow.native_forwards.seal(batch.id)
         uow.native_forwards.claim_bridge(batch.id, deadline)
-        uow.native_forwards.record_first_hop_result(
-            batch.id,
-            marker_message_id=900,
-            bridge_message_ids=(901, 902),
-        )
         uow.native_forwards.mark_awaiting_bot("marker-1", 7001, marker_message_id=900)
         uow.native_forwards.append_bridge_message(7001, 901, "linked")
         uow.native_forwards.append_bridge_message(7001, 902, "linked")
@@ -187,10 +177,5 @@ def _awaiting_single_item_batch(uow, *, user_id: int, sender_id: int, marker_tok
     uow.native_forwards.append_item(batch.id, relay.id)
     uow.native_forwards.seal(batch.id)
     uow.native_forwards.claim_bridge(batch.id, _now() + timedelta(seconds=30))
-    uow.native_forwards.record_first_hop_result(
-        batch.id,
-        marker_message_id=500,
-        bridge_message_ids=(601,),
-    )
     uow.native_forwards.mark_awaiting_bot(marker_token, sender_id, marker_message_id=500)
     return batch
