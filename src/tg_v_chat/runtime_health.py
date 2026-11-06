@@ -13,7 +13,10 @@ class RoleHeartbeat:
         self.root.mkdir(parents=True, exist_ok=True)
 
     def beat(self, role: str) -> None:
-        self.path_for(role).write_text(datetime.now(timezone.utc).isoformat())
+        path = self.path_for(role)
+        temporary = path.with_suffix(".tmp")
+        temporary.write_text(datetime.now(timezone.utc).isoformat())
+        temporary.replace(path)
 
     def remove(self, role: str) -> None:
         self.path_for(role).unlink(missing_ok=True)

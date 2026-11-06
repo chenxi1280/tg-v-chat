@@ -118,8 +118,11 @@ def _worker_runner(worker_runner, heartbeat: RoleHeartbeat, stop_signal: StopSig
 def _sleep_with_heartbeat(seconds: int, heartbeat: RoleHeartbeat, stop_signal: StopSignal) -> None:
     heartbeat.beat("worker")
     deadline = time.monotonic() + seconds
-    while not stop_signal.stop and time.monotonic() < deadline:
-        time.sleep(min(1, deadline - time.monotonic()))
+    while not stop_signal.stop:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        time.sleep(min(1, remaining))
 
 
 def _remove_stale_heartbeats(heartbeat: RoleHeartbeat) -> None:

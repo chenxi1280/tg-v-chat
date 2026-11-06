@@ -26,7 +26,7 @@
 | Worker runner | `src/tg_v_chat/workers/runner.py` | dev | Real `run_once` / `run_forever` worker loop entrypoint; raises when no workers are configured |
 | Session health worker | `src/tg_v_chat/workers/session_health.py` | dev | Verifies authorized sessions, recomputes account status, and retries terminal media release |
 | Runtime healthcheck | `src/tg_v_chat/healthcheck.py` | dev | Validates PostgreSQL connectivity plus optional role heartbeat freshness |
-| Runtime heartbeat | `src/tg_v_chat/runtime_health.py` | dev | Role heartbeat files and freshness constants for bot/listener/worker health |
+| Runtime heartbeat | `src/tg_v_chat/runtime_health.py` | dev | Atomic role heartbeat file replacement and freshness constants for bot/listener/worker health |
 | Runtime process | `src/tg_v_chat/runtime.py` | dev | Role-based bot/listener/worker process entrypoint with stale heartbeat cleanup |
 | Storage bootstrap | `src/tg_v_chat/storage/database.py` | dev | SQLAlchemy engine/session factory; runtime requires PostgreSQL unless tests opt in to SQLite |
 | Media store | `src/tg_v_chat/telegram/media_store.py` | dev | Owner-only shared file spool for incoming/outgoing Telegram media artifacts |
